@@ -1,0 +1,723 @@
+﻿<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Мини-CRM v11</title>
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c3e50'/%3E%3Cpath d='M20 16c-2 0-4 2-4 4 0 16 12 28 28 28 2 0 4-2 4-4v-6c0-1-1-2-2-3l-7-3c-1-1-3 0-4 1l-3 3c-5-2-8-5-10-10l3-3c1-1 2-3 1-4l-3-7c-1-1-2-2-3-2h-6z' fill='%233498db'/%3E%3C/svg%3E">
+    <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
+        <link rel="stylesheet" href="./crm.css">
+</head>
+<body>
+
+<header>
+    <div style="display:flex; align-items:center; gap:10px;">
+        <h1>📞 Мини-CRM v11</h1>
+    </div>
+    <div class="header-smart-search" id="headerSmartSearchWrap">
+        <div class="header-smart-search-input-wrap">
+            <input type="text" id="headerSmartSearchInput" placeholder="🔎 Умный поиск: задачи, контрагенты, контакты (например: задача:счет)">
+            <button type="button" id="headerSmartSearchClearBtn" class="header-smart-search-clear" data-action="clearHeaderSmartSearch" title="Очистить поиск">×</button>
+        </div>
+        <div id="headerSmartSearchDropdown" class="header-smart-search-dropdown hidden" role="listbox" aria-label="Результаты поиска"></div>
+    </div>
+    <div class="toolbar">
+        <button data-action="toggleSound" id="soundBtn" class="btn-warning">🔇 Звук</button>
+        <button data-action="openCustomSoundPicker" id="customSoundBtn" class="btn-primary">🎵 Свой звук</button>
+        <button data-action="resetCustomSound" id="resetCustomSoundBtn" class="btn-warning">↺ Стандарт</button>
+        <input type="file" id="customSoundFile" accept="audio/*" style="display:none">
+        <button data-action="exportToExcel" class="btn-excel">📊 Excel</button>
+        <button data-action="openManagerReportModal" class="btn-excel">📈 Отчет руководителю</button>
+        <button data-action="exportJSON" class="btn-primary">💾 JSON</button>
+        <button data-action="saveDatabaseFile" id="saveDatabaseFileBtn" class="btn-success">💾 Сохранить файл</button>
+        <span id="dbFileSaveIndicator" style="font-size:0.72rem; color:#5c4a14; background:#fff6d8; border:1px solid #f0df9a; padding:3px 7px; border-radius:10px;">Файл: не привязан</span>
+        <button data-action="openImport" class="btn-primary">📂 Импорт</button>
+        <input type="file" id="importFile" style="display:none">
+        <button data-action="resetData" class="btn-danger">🗑 Сброс</button>
+    </div>
+</header>
+
+<div class="container">
+    <!-- SIDEBAR WITH TABS -->
+    <div class="sidebar">
+        <div class="nav-tabs">
+            <div class="nav-tab active" data-action="switchSidebarTab" data-tab="dashboard" id="tab-btn-dashboard">📊 Дашборд</div>
+            <div class="nav-tab" data-action="switchSidebarTab" data-tab="tasks" id="tab-btn-tasks">📋 Задачи</div>
+            <div class="nav-tab" data-action="switchSidebarTab" data-tab="deals" id="tab-btn-deals">🏷️ Сделки</div>
+            <div class="nav-tab" data-action="switchSidebarTab" data-tab="clients" id="tab-btn-clients">👥 Клиенты</div>
+            <div class="nav-tab" data-action="switchSidebarTab" data-tab="calls" id="tab-btn-calls">📞 Очередь</div>
+        </div>
+
+        <!-- Clients List -->
+        <div id="sidebar-clients" class="sidebar-content">
+            <div class="clients-sticky">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; padding:0 5px;">
+                    <strong style="font-size:0.9rem;">Список</strong>
+                    <button data-action="openClientModal" class="btn-success btn-sm">+ Новый</button>
+                </div>
+                <select id="clientSort" style="margin-bottom: 8px; border-radius: 8px; padding: 8px; font-size:0.82rem;">
+                    <option value="alpha">Сортировка: По алфавиту</option>
+                    <option value="class">Сортировка: По классу (A-B-C)</option>
+                    <option value="recent_task">Сортировка: По недавним изменениям</option>
+                </select>
+                <div class="search-wrap">
+                    <input type="text" id="searchClient" placeholder="🔍 Поиск..." style="margin-bottom: 0; border-radius: 15px; padding-left: 12px; padding-right: 28px; font-size:0.85rem;">
+                    <button type="button" class="search-clear-btn" id="searchClearBtn" data-action="clearClientSearch" title="Очистить поиск">×</button>
+                </div>
+                <div class="client-fill-summary">
+                    <div class="client-fill-summary-row">
+                        <div id="clientCompletenessSummary" class="client-fill-summary-text">Проверка карточек...</div>
+                        <button type="button" class="btn-primary btn-sm" data-action="startClientFillWizard" id="clientFillWizardBtn">🧩 Дозаполнить</button>
+                    </div>
+                </div>
+            </div>
+            <div id="clientList"></div>
+        </div>
+
+        <!-- Tasks List with Filters -->
+        <div id="sidebar-tasks" class="sidebar-content active">
+            <div class="clients-sticky">
+                <div style="padding:0 5px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="font-size:0.9rem;">Все дела</strong>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <button data-action="openGlobalTaskModal" class="btn-success btn-sm">+ Задача</button>
+                        <span id="taskCountBadge" style="background:var(--primary); color:white; font-size:0.7rem; padding:2px 6px; border-radius:10px;">0</span>
+                    </div>
+                </div>
+                
+                <div class="filter-group">
+                    <button class="filter-btn active" data-action="setTaskFilter" data-filter="active">Активные</button>
+                    <button class="filter-btn" data-action="setTaskFilter" data-filter="done">Выполненные</button>
+                    <button class="filter-btn" data-action="setTaskFilter" data-filter="all">Все</button>
+                </div>
+
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr auto; gap:6px; margin:8px 0 6px;">
+                    <select id="globalTaskStatusFilter">
+                        <option value="all">Статус: все</option>
+                        <option value="new">🆕 Новая</option>
+                        <option value="work">🛠️ В работе</option>
+                        <option value="done">✅ Выполнена</option>
+                    </select>
+                    <input id="globalTaskDateFilter" type="date" title="Фильтр по дате задачи/выполнения">
+                    <select id="globalTaskSort" title="Сортировка задач">
+                        <option value="due">Сорт: по сроку</option>
+                        <option value="temp_desc">Сорт: 🔴 горячие → 🟢 холодные</option>
+                        <option value="temp_asc">Сорт: 🟢 холодные → 🔴 горячие</option>
+                    </select>
+                    <button class="btn-warning btn-sm" type="button" data-action="clearGlobalTaskDateFilter">Сброс</button>
+                </div>
+
+                <div style="font-size:0.75rem; color:#7f8c8d; margin-bottom:10px; padding:0 5px;">
+                    🔴 Просрочено &nbsp; 🟢 Сегодня &nbsp; 🔵 Будущие &nbsp; 🆕 Новая &nbsp; 🛠️ В работе &nbsp; ✅ Выполнена
+                </div>
+            </div>
+            <div id="globalTasksList"></div>
+        </div>
+
+        <div id="sidebar-deals" class="sidebar-content">
+            <div class="clients-sticky">
+                <div style="padding:0 5px; margin-bottom:10px; display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="font-size:0.9rem;">Сделки (объекты)</strong>
+                    <div style="display:flex; gap:6px; align-items:center;">
+                        <button data-action="openCreateDealPrompt" class="btn-success btn-sm">+ Сделка</button>
+                        <span id="dealCountBadge" style="background:var(--primary); color:white; font-size:0.7rem; padding:2px 6px; border-radius:10px;">0</span>
+                    </div>
+                </div>
+                <div style="font-size:0.75rem; color:#7f8c8d; margin-bottom:8px; padding:0 5px;">
+                    Базовая MVP-сущность сделки с датой следующего касания.
+                </div>
+                <div style="display:flex; gap:6px; padding:0 5px; margin-bottom:8px;">
+                    <div style="flex:1; font-size:0.74rem; color:#6a5a12; background:#fff8de; border:1px solid #f3e0a0; border-radius:6px; padding:5px 6px;">
+                        Сегодня: <strong id="dealTodayCount">0</strong>
+                    </div>
+                    <div style="flex:1; font-size:0.74rem; color:#9d2418; background:#fff0ee; border:1px solid #f2c2bc; border-radius:6px; padding:5px 6px;">
+                        Просрочено: <strong id="dealOverdueCount">0</strong>
+                    </div>
+                </div>
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:6px; margin:8px 0 6px;">
+                    <select id="dealTimingFilter">
+                        <option value="today">Сегодня</option>
+                        <option value="overdue">Просрочено</option>
+                        <option value="week">На неделе</option>
+                        <option value="all">Все</option>
+                    </select>
+                    <select id="dealCategoryFilter">
+                        <option value="all">Категория: все</option>
+                        <option value="roof">Кровля</option>
+                        <option value="facade">Фасад</option>
+                        <option value="board">Доска</option>
+                        <option value="other">Прочее</option>
+                    </select>
+                    <select id="dealStageFilter">
+                        <option value="all">Стадия: все</option>
+                        <option value="new">Новый</option>
+                        <option value="calc_sent">Расчёт отправлен</option>
+                        <option value="negotiation">Торг</option>
+                        <option value="shipment">Отгрузка</option>
+                        <option value="waiting">Ожидание</option>
+                        <option value="closed">Закрыто</option>
+                    </select>
+                </div>
+            </div>
+            <div id="dealsList"></div>
+        </div>
+
+        <div id="sidebar-dashboard" class="sidebar-content">
+            <div class="clients-sticky">
+                <div style="padding:0 5px; font-size:0.9rem; font-weight:600;">Недельный обзор</div>
+                <div style="padding:6px 5px 0 5px; font-size:0.78rem; color:#6d7b88;">
+                    Перетаскивайте задачи между днями недели, чтобы быстро менять дату выполнения.
+                </div>
+                <div style="padding:8px 5px 0 5px;">
+                    <button class="btn-primary btn-sm" style="width:100%;" data-action="openStatModal" data-kind="completedNoActive">Клиенты без актуальных задач</button>
+                </div>
+            </div>
+            <div class="dashboard-side-list">
+                <div class="dashboard-side-day" id="sidebarDashboardDayTitle">Задачи на сегодня</div>
+                <div id="sidebarDashboardDayList"></div>
+            </div>
+        </div>
+
+        <div id="sidebar-calls" class="sidebar-content">
+            <div class="clients-sticky">
+                <div style="padding:0 5px; margin-bottom:8px; display:flex; justify-content:space-between; align-items:center;">
+                    <strong style="font-size:0.9rem;">Кому звонить</strong>
+                    <span id="callQueueCountBadge" style="background:var(--primary); color:white; font-size:0.7rem; padding:2px 6px; border-radius:10px;">0</span>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+                    <select id="cqClassFilter">
+                        <option value="all">Класс: все</option>
+                        <option value="A">Класс A</option>
+                        <option value="B">Класс B</option>
+                        <option value="C">Класс C</option>
+                        <option value="Не указан">Класс не указан</option>
+                    </select>
+                    <select id="cqTypeFilter">
+                        <option value="all">Тип: все</option>
+                        <option value="Монтажник">Монтажник</option>
+                        <option value="Перекуп">Перекуп</option>
+                        <option value="Частник">Частник</option>
+                        <option value="Для собственных нужд">Для себя</option>
+                        <option value="Не указан">Не указан</option>
+                    </select>
+                </div>
+                <div style="display:grid; grid-template-columns:1fr 1fr; gap:6px; margin-bottom:6px;">
+                    <select id="cqStatusFilter">
+                        <option value="all">Статус: все</option>
+                        <option value="Новый">Новый</option>
+                        <option value="В работе">В работе</option>
+                    </select>
+                    <select id="cqUrgencyFilter">
+                        <option value="all">Источник: всё</option>
+                        <option value="a">Срочные задачи</option>
+                        <option value="b">Без касаний</option>
+                        <option value="c">Разогрев</option>
+                    </select>
+                </div>
+                <div style="display:flex; gap:6px; align-items:center; margin-bottom:6px;">
+                    <label style="margin:0; display:flex; gap:4px; align-items:center; font-size:0.75rem;">
+                        Не трогал > <input id="cqMinNoTouch" type="number" min="1" value="21" style="width:56px; padding:5px;">
+                    </label>
+                    <label style="margin:0; display:flex; gap:4px; align-items:center; font-size:0.75rem;">
+                        <input id="cqNoActiveOnly" type="checkbox"> без активных задач
+                    </label>
+                </div>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <select id="cqSessionTarget">
+                        <option value="10">10 звонков</option>
+                        <option value="20">20 звонков</option>
+                    </select>
+                    <button class="btn-primary btn-sm" data-action="startCallSession">Старт</button>
+                    <button class="btn-warning btn-sm" data-action="stopCallSession">Стоп</button>
+                </div>
+                <div id="callSessionInfo" class="call-session-box">Сессия не запущена</div>
+            </div>
+            <div class="call-queue-wrap">
+                <div id="callQueueNextCard"></div>
+                <div id="callQueueList"></div>
+            </div>
+        </div>
+    </div>
+
+    <div id="sidebarResizeHandle" class="sidebar-resize-handle" title="Потяните, чтобы изменить ширину левой колонки"></div>
+
+    <!-- MAIN CONTENT -->
+    <div class="main-content">
+        <div id="dashboardView" class="dashboard-view hidden">
+            <div class="dashboard-stats">
+                <div class="stat-box stat-today clickable" data-action="openStatModal" data-kind="today"><div class="stat-number" id="statToday" style="color:var(--success)">0</div><div class="stat-label">Сегодня</div></div>
+                <div class="stat-box stat-overdue clickable" data-action="openStatModal" data-kind="overdue"><div class="stat-number" id="statOverdue" style="color:var(--danger)">0</div><div class="stat-label">Просрочено</div></div>
+                <div class="stat-box stat-week clickable" data-action="openStatModal" data-kind="week"><div class="stat-number" id="statWeek" style="color:var(--primary)">0</div><div class="stat-label">7 дней</div></div>
+                <div class="stat-box stat-inactive clickable" data-action="openStatModal" data-kind="inactive"><div class="stat-number" id="statNoTouch" style="color:var(--warning)">0</div><div class="stat-label" id="statNoTouchLabel">Долго без касаний</div></div>
+                <div class="stat-box clickable" data-action="openDealsSidebar"><div class="stat-number" id="statDealsDue" style="color:#7b3fe4">0</div><div class="stat-label">Сделки: касания</div></div>
+            </div>
+            <div id="dashboardDealsQueue" class="dashboard-deals-queue"></div>
+            <div class="timeline-wrap">
+                <div class="timeline-head">
+                    <strong>Канбан таймлайн на неделю</strong>
+                    <div style="display:flex; gap:6px;">
+                        <button class="btn-primary btn-sm" data-action="shiftDashboardWeek" data-offset="-7">← Неделя</button>
+                        <button class="btn-success btn-sm" data-action="resetDashboardWeek">Текущая неделя</button>
+                        <span id="timelineWeekLabel" style="font-size:0.82rem; color:#5d6d7e; align-self:center;">-</span>
+                        <button class="btn-primary btn-sm" data-action="shiftDashboardWeek" data-offset="7">Неделя →</button>
+                    </div>
+                </div>
+                <div id="timelineGrid" class="timeline-grid"></div>
+            </div>
+        </div>
+
+        <!-- Empty State -->
+        <div id="emptyState">
+            <div style="font-size:3rem; margin-bottom:10px;">👈</div>
+            <h2>Выберите раздел слева</h2>
+            <p>Перейдите во вкладку «Клиенты» или «Задачи».</p>
+        </div>
+
+        <!-- Client Details View -->
+        <div id="clientDetails" class="hidden">
+            <div class="card">
+                <div style="display:flex; justify-content:space-between; align-items:start; margin-bottom:15px;">
+                    <div>
+                        <h2 id="detailName" style="margin:0 0 5px 0; color:var(--dark);">Название</h2>
+                        <span id="detailStatus" style="background:#eee; padding:2px 8px; border-radius:4px; font-size:0.8rem; font-weight:bold;">Статус</span>
+                        <span id="detailType" style="background:#eef; color:#55a; padding:2px 8px; border-radius:4px; font-size:0.8rem; font-weight:bold; margin-left:5px;">Тип</span>
+                        <span id="detailClass" style="background:#f5f5f5; color:#333; padding:2px 8px; border-radius:4px; font-size:0.8rem; font-weight:bold; margin-left:5px;">Класс</span>
+                    </div>
+                    <div style="display:flex; gap:8px;">
+                        <button data-action="editCurrentClient" class="btn-warning btn-sm">✏️ Изменить</button>
+                        <button data-action="deleteCurrentClient" class="btn-danger btn-sm">🗑 Удалить</button>
+                    </div>
+                </div>
+                
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:15px; margin-bottom:15px; color:#555; font-size:0.9rem;">
+                    <div><strong>📍 Адрес:</strong> <span id="detailAddress">-</span></div>
+                    <div><strong>📞 Телефон:</strong> <span id="detailPhone">-</span></div>
+                </div>
+                
+                <div style="margin-bottom:15px; font-size:0.9rem;" id="detailRelatedBlock">
+                    <strong>🔗 Связанные:</strong> <span id="detailRelated" style="color:#666;">-</span>
+                </div>
+
+                <!-- Contacts -->
+                <div style="margin-bottom: 15px;">
+                    <label>👥 Контактные лица:</label>
+                    <div id="detailContactsList" class="contacts-list"></div>
+                </div>
+
+                <div style="background:#f8f9fa; padding:10px; border-radius:4px; font-size:0.9rem; margin-bottom: 20px;">
+                    <strong>📝 Заметки:</strong><br>
+                    <span id="detailNotes" style="color:#666; white-space: pre-wrap;">-</span>
+                </div>
+                
+                <button data-action="openHistoryModal" class="btn-primary" style="width:100%; padding:12px;">📞 Записать контакт / Задачу</button>
+            </div>
+
+            <div class="content-tabs">
+                <div class="content-tab active" data-tab="tasks" data-action="switchContentTab">📋 Задачи клиента</div>
+                <div class="content-tab" data-tab="history" data-action="switchContentTab">🕒 История</div>
+            </div>
+
+            <div id="tab-tasks-content"><div id="tasksList"></div></div>
+            <div id="tab-history-content" class="hidden"><div id="historyList"></div></div>
+        </div>
+
+        <div id="dealDetailsView" class="hidden">
+            <div class="card">
+                <h2 style="margin:0 0 10px 0; color:var(--dark);">Сделка</h2>
+                <div id="dealDetailsPanel" class="deal-details-panel"></div>
+            </div>
+        </div>
+    </div>
+</div>
+
+<!-- Modals -->
+<!-- Client Modal -->
+<div id="clientModal" class="modal-overlay hidden">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title" id="modalTitle">Контрагент</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="clientModal">&times;</button>
+        </div>
+        <input type="hidden" id="clientId">
+        <div id="clientWizardPanel" class="client-wizard-box hidden"></div>
+        <div id="clientValidationBanner" class="card-completeness-box hidden"></div>
+        <div class="form-group"><label>Название *</label><input type="text" id="cName" placeholder="ООО Ромашка"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="form-group"><label>Адрес</label><input type="text" id="cAddress"></div>
+            <div class="form-group"><label>Телефон</label><input type="text" id="cPhone"></div>
+        </div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <div class="form-group"><label>Тип</label>
+                <select id="cType"></select>
+            </div>
+            <div class="form-group"><label>Класс</label>
+                <select id="cClass">
+                    <option value="Не указан" selected>Не указан</option>
+                    <option value="A">A 👑</option>
+                    <option value="B">B 🌿</option>
+                    <option value="C">C ❄️</option>
+                </select>
+            </div>
+            <div class="form-group"><label>Статус</label>
+                <select id="cStatus"><option>Новый</option><option>В работе</option><option>Постоянный</option><option>Архив</option></select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Связанные юрлица</label>
+            <textarea id="cRelated" style="min-height: 60px;"></textarea>
+            <div style="margin-top:8px; background:#f8f9fa; border:1px solid #eee; border-radius:6px; padding:8px;">
+                <div style="font-size:0.78rem; color:#666; margin-bottom:6px;">Поиск по базе контрагентов:</div>
+                <input type="text" id="relatedClientSearch" placeholder="🔍 Найти контрагента..." style="margin-bottom:6px;">
+                <div style="display:flex; gap:6px; align-items:flex-start;">
+                    <select id="relatedClientSelect" size="4" style="flex:1;"></select>
+                    <button type="button" class="btn-primary btn-sm" data-action="addSelectedRelatedClient">+ Связать</button>
+                </div>
+                <div id="relatedClientSelected" style="margin-top:8px; display:flex; flex-wrap:wrap; gap:6px;"></div>
+            </div>
+        </div>
+        <div class="form-group"><label>Заметки</label><textarea id="cNotes" style="min-height: 80px;"></textarea></div>
+        
+        <div class="form-group" id="modalContactsGroup">
+            <label>👥 Контактные лица</label>
+            <div id="modalContactsList" style="margin-bottom: 10px;"></div>
+            <button type="button" data-action="addModalContact" class="btn-primary btn-sm" style="width: 100%;">+ Добавить контакт</button>
+        </div>
+        
+        <div style="text-align: right; margin-top: 20px; padding-top: 15px; border-top: 1px solid #eee;">
+            <button data-action="closeModal" data-modal="clientModal" class="btn-danger" style="margin-right: 10px;">Отмена</button>
+            <button data-action="saveClientAndNext" id="clientSaveNextBtn" class="btn-primary hidden" style="margin-right: 10px;">Сохранить и далее</button>
+            <button data-action="saveClient" class="btn-success">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- History/Task Modal (SMART) -->
+<div id="historyModal" class="modal-overlay hidden">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title" id="histModalTitle">Запись контакта</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="historyModal">&times;</button>
+        </div>
+        <input type="hidden" id="hId">
+        <input type="hidden" id="hClientId">
+        <div id="hClientSelectWrap" class="form-group hidden">
+            <label>Контрагент</label>
+            <input type="text" id="hClientSearch" list="hClientOptions" placeholder="Выберите контрагента">
+            <datalist id="hClientOptions"></datalist>
+            <input type="hidden" id="hClientSelect">
+            <div style="margin-top:6px;">
+                <span class="task-client-link" data-action="openHistoryModalClientCard">Открыть карточку контрагента</span>
+            </div>
+        </div>
+        <div id="hContactPersonWrap" class="form-group hidden">
+            <label>Контактное лицо (с кем поговорили)</label>
+            <select id="hContactPersonSelect"></select>
+        </div>
+        
+        <!-- STATUS TOGGLE -->
+        <label>Статус задачи:</label>
+        <div class="status-toggle">
+            <div class="status-option active-new" id="statusNewBtn" data-action="setModalStatus" data-status="new">🔵 Новая</div>
+            <div class="status-option" id="statusWorkBtn" data-action="setModalStatus" data-status="work">🟡 В работе</div>
+            <div class="status-option" id="statusDoneBtn" data-action="setModalStatus" data-status="done">✅ Выполнена</div>
+        </div>
+        <input type="hidden" id="hStatus" value="new">
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div class="form-group"><label>Дата контакта</label><input type="date" id="hDate"></div>
+            <div class="form-group"><label>Время</label><input type="time" id="hTime"></div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div class="form-group"><label>Тип</label><select id="hType"><option>Исходящий</option><option>Входящий</option></select></div>
+            <div></div>
+        </div>
+        <div class="form-group">
+            <label>Тема</label>
+            <textarea id="hTopic" placeholder="Тема задачи..."></textarea>
+        </div>
+        <div class="form-group">
+            <label>Результат</label>
+            <textarea id="hResult" placeholder="Итог контакта"></textarea>
+        </div>
+        
+        <!-- SMART SECTION: Shows only if date is Today or Past -->
+        <div id="smartNextStepSection" class="smart-section hidden">
+            <h4 style="margin:0 0 10px 0; color:var(--success); font-size:1rem;">🚀 Следующие действия</h4>
+            <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+                <div class="form-group"><label>Дата след. контакта</label><input type="date" id="hNextDate"></div>
+                <div class="form-group"><label>Время</label><input type="time" id="hNextTime"></div>
+            </div>
+            <div class="form-group"><label>Следующие действия</label><textarea id="hNextStep" placeholder="Конкретное действие..."></textarea></div>
+        </div>
+
+        <div style="text-align:right; margin-top:15px;">
+            <button data-action="closeModal" data-modal="historyModal" class="btn-danger" style="margin-right:10px;">Отмена</button>
+            <button data-action="saveHistory" class="btn-success">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- Task View Modal -->
+<div id="taskViewModal" class="modal-overlay hidden">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title">Просмотр задачи</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="taskViewModal">&times;</button>
+        </div>
+        <input type="hidden" id="tvTaskId">
+        <input type="hidden" id="tvClientId">
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
+            <div>
+                <label>Контрагент</label>
+                <div id="tvClientName" class="task-client-link" data-action="openTaskClientFromModal">-</div>
+            </div>
+            <div>
+                <label>Статус</label>
+                <div id="tvStatus" style="font-weight:600;">-</div>
+            </div>
+        </div>
+
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px; margin-bottom:10px;">
+            <div>
+                <label>Дата и время задачи</label>
+                <div id="tvNextDateTime" style="font-weight:600;">-</div>
+            </div>
+            <div>
+                <label>Тип контакта</label>
+                <div id="tvType">-</div>
+            </div>
+        </div>
+
+        <div style="margin-bottom:10px;">
+            <label>Итог предыдущего контакта</label>
+            <div id="tvResult">-</div>
+        </div>
+
+        <div style="margin-bottom:15px;">
+            <label>Тема текущей задачи</label>
+            <div id="tvDesc" style="background:#f8f9fa; border:1px solid #eee; border-radius:4px; padding:10px; white-space:pre-wrap;">-</div>
+            <textarea id="tvDescEdit" class="hidden" style="margin-top:8px; min-height:90px;" placeholder="Опишите подробности шага..."></textarea>
+            <div id="tvProgressDraftBar" class="hidden" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
+                <div style="font-size:0.85rem; color:#555;">Шаг: <strong id="tvProgressDraftTypeLabel">-</strong></div>
+                <div style="display:flex; gap:8px;">
+                    <button type="button" class="btn-primary btn-sm" data-action="saveTaskViewProgressDraft">Сохранить шаг</button>
+                    <button type="button" class="btn-danger btn-sm" data-action="cancelTaskViewProgressDraft">Отмена</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tvHeatPanel" class="task-heat-panel">
+            <div class="task-heat-head">
+                <label style="margin:0;">Температура откладывания</label>
+                <div id="tvTempBadgeWrap"></div>
+            </div>
+            <div id="tvTempBox"></div>
+            <div id="tvTempReason" class="task-heat-reason">-</div>
+            <div class="task-heat-actions">
+                <button type="button" class="btn-warning btn-sm" data-action="taskViewPostponeQuick" data-kind="30m">Отложить +30 мин</button>
+                <button type="button" class="btn-warning btn-sm" data-action="taskViewPostponeQuick" data-kind="tomorrow">Отложить на завтра</button>
+                <button type="button" class="btn-warning btn-sm" data-action="taskViewPostponeQuick" data-kind="week">Отложить на неделю</button>
+                <button type="button" class="btn-primary btn-sm" data-action="toggleTaskViewProgressPanel">Сделал шаг</button>
+            </div>
+            <div id="tvProgressPanel" class="task-progress-panel hidden">
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="TALKED">Поговорил</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="INFO_RECEIVED">Получил инфо</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="CALC_DONE">Сделал расчет</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="QUOTE_SENT">Отправил КП</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="INVOICE_SENT">Отправил счет</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="PROMISE_PAY_SET">Обещание оплаты</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="PAYMENT_PART">Частичная оплата</button>
+                <button type="button" class="btn-sm" data-action="taskViewAddProgressEvent" data-progress-type="PAYMENT_FULL">Полная оплата</button>
+            </div>
+            <div id="tvEventsList" class="task-events-list"></div>
+        </div>
+
+        <div id="tvDoneResultWrap" class="hidden" style="margin-bottom:12px; background:#fff8f0; border:1px solid #f3d19f; border-radius:6px; padding:10px;">
+            <label>Итог выполнения (обязательно)</label>
+            <textarea id="tvDoneResultInput" placeholder="Кратко зафиксируйте итог..." style="min-height:70px;"></textarea>
+            <div style="font-size:0.78rem; color:#8a6d3b;">Без заполнения итога задача не будет отмечена как выполненная.</div>
+            <div style="text-align:right; margin-top:6px;">
+                <button class="btn-danger btn-sm" data-action="cancelMarkTaskDoneFromModal">Отмена</button>
+            </div>
+        </div>
+
+        <div style="display:flex; justify-content:flex-end; gap:8px; border-top:1px solid #eee; padding-top:12px;">
+            <button id="tvDealBtn" class="btn-primary" data-action="createDealFromTaskModal">Сделка</button>
+            <button id="tvDoneBtn" class="btn-success" data-action="markTaskDoneFromModal">Выполнено</button>
+            <button class="btn-warning" data-action="editTaskFromModal">Редактировать</button>
+            <button class="btn-danger" data-action="deleteTaskFromModal">Удалить</button>
+        </div>
+    </div>
+</div>
+
+<!-- Stats Modal -->
+<div id="statsModal" class="modal-overlay hidden">
+    <div class="modal">
+        <div class="modal-header">
+            <h3 class="modal-title" id="statsModalTitle">Статистика</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="statsModal">&times;</button>
+        </div>
+
+        <div id="inactiveConfigBlock" class="hidden" style="margin-bottom:12px; background:#f8f9fa; border:1px solid #eee; border-radius:6px; padding:10px;">
+            <div style="display:grid; grid-template-columns: 1fr 1fr auto; gap:8px; align-items:end;">
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Количество</label>
+                    <input id="inactiveCountInput" list="inactiveCountOptions" type="number" min="1" step="1" value="30">
+                    <datalist id="inactiveCountOptions">
+                        <option value="1"></option><option value="2"></option><option value="3"></option><option value="4"></option><option value="5"></option>
+                        <option value="6"></option><option value="7"></option><option value="8"></option><option value="9"></option><option value="10"></option>
+                        <option value="12"></option><option value="14"></option><option value="21"></option><option value="30"></option><option value="60"></option>
+                        <option value="90"></option><option value="180"></option><option value="365"></option>
+                    </datalist>
+                </div>
+                <div class="form-group" style="margin-bottom:0;">
+                    <label>Период</label>
+                    <select id="inactiveUnitSelect">
+                        <option value="days">Дни</option>
+                        <option value="weeks">Недели</option>
+                        <option value="months">Месяцы</option>
+                    </select>
+                </div>
+                <button class="btn-primary" data-action="saveInactiveFilter">Сохранить</button>
+            </div>
+        </div>
+
+        <div id="statsModalList" class="stats-modal-list"></div>
+    </div>
+</div>
+
+<!-- Manager Report Modal -->
+<div id="managerReportModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Отчет руководителю</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="managerReportModal">&times;</button>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div class="form-group">
+                <label>Период с</label>
+                <input type="date" id="reportDateFrom">
+            </div>
+            <div class="form-group">
+                <label>Период по</label>
+                <input type="date" id="reportDateTo">
+            </div>
+        </div>
+        <div style="font-size:0.85rem; color:#666; margin-bottom:10px;">
+            В отчет попадут контрагенты с задачами за период. В комментарии: заметка клиента + Тема/Итог всех задач за период.
+        </div>
+        <div style="text-align:right;">
+            <button data-action="closeModal" data-modal="managerReportModal" class="btn-danger" style="margin-right:10px;">Отмена</button>
+            <button data-action="exportManagerReport" class="btn-success">Выгрузить Excel</button>
+        </div>
+    </div>
+</div>
+
+<!-- Due Tasks Popup -->
+<div id="dueTasksModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:640px;">
+        <div class="modal-header">
+            <h3 class="modal-title">⏰ Срок выполнения задач</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="dueTasksModal">&times;</button>
+        </div>
+        <div id="dueTasksModalList" class="stats-modal-list"></div>
+        <div style="text-align:right; margin-top:12px;">
+            <button class="btn-primary" data-action="closeModal" data-modal="dueTasksModal">Закрыть</button>
+        </div>
+    </div>
+</div>
+
+<!-- Reschedule Task Modal -->
+<div id="rescheduleTaskModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:420px;">
+        <div class="modal-header">
+            <h3 class="modal-title">Перенести срок задачи</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="rescheduleTaskModal">&times;</button>
+        </div>
+        <input type="hidden" id="rsTaskId">
+        <div class="form-group">
+            <label>Дата выполнения</label>
+            <input type="date" id="rsDate">
+        </div>
+        <div class="form-group">
+            <label>Время</label>
+            <input type="time" id="rsTime">
+        </div>
+        <div style="text-align:right;">
+            <button class="btn-danger" data-action="closeModal" data-modal="rescheduleTaskModal" style="margin-right:8px;">Отмена</button>
+            <button class="btn-success" data-action="saveRescheduledTask">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- Deal Touch Modal -->
+<div id="dealTouchModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:520px;">
+        <div class="modal-header">
+            <h3 class="modal-title" id="dealTouchModalTitle">Касание сделки</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="dealTouchModal">&times;</button>
+        </div>
+        <input type="hidden" id="dealTouchDealId">
+        <input type="hidden" id="dealTouchId">
+        <input type="hidden" id="dealTouchMode" value="touch">
+
+        <div id="dealTouchTouchFields">
+            <div class="form-group">
+                <label>Тип касания</label>
+                <select id="dealTouchType">
+                    <option value="call">Звонок</option>
+                    <option value="whatsapp">WhatsApp</option>
+                    <option value="telegram">Telegram</option>
+                    <option value="email">Email</option>
+                    <option value="other">Другое</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Результат</label>
+                <select id="dealTouchResult">
+                    <option value="reached">Дозвонился</option>
+                    <option value="no_answer">Не ответил</option>
+                    <option value="price_discussion">Обсуждали цену</option>
+                    <option value="waiting">Ожидание</option>
+                    <option value="won">Won</option>
+                    <option value="lost">Lost</option>
+                    <option value="other">Другое</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Комментарий</label>
+                <textarea id="dealTouchComment" placeholder="Краткий комментарий"></textarea>
+            </div>
+            <label style="display:flex; gap:6px; align-items:center; font-size:0.85rem; margin-bottom:8px;">
+                <input id="dealTouchManualNextToggle" type="checkbox">
+                Задать вручную дату следующего касания
+            </label>
+        </div>
+
+        <div class="form-group">
+            <label id="dealTouchDateLabel">Дата следующего касания</label>
+            <input type="date" id="dealTouchNextDate">
+        </div>
+
+        <div style="text-align:right;">
+            <button class="btn-danger" data-action="closeModal" data-modal="dealTouchModal" style="margin-right:8px;">Отмена</button>
+            <button class="btn-success" data-action="saveDealTouchModal">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<div id="toastRoot" class="toast-root"></div>
+
+    <script src="./crm-store.js"></script>
+    <script src="./crm-utils.js"></script>
+    <script src="./crm-normalizers.js"></script>
+    <script src="./crm-tasks.js"></script>
+    <script src="./crm-deals.js"></script>
+    <script src="./crm-import-export.js"></script>
+    <script src="./crm.js"></script>
+</body>
+</html>
+
+
+
