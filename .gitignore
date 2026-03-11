@@ -1,0 +1,9 @@
+crm_backup_*.json
+mini_crm_backup*.json
+*.xlsx
+*.xls
+*.tmp
+*.log
+.DS_Store
+Thumbs.db
+.vscode/
