@@ -220,6 +220,59 @@
         .deal-item-meta { font-size:0.75rem; color:#607487; }
         .deal-item-actions { display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
         .deal-item-actions .btn-sm { padding:3px 8px; }
+        .deal-closed-chip {
+            display:inline-flex;
+            align-items:center;
+            width:fit-content;
+            background:#ffe9e6;
+            color:#9f1d1d;
+            border:1px solid #f7bdb5;
+            border-radius:999px;
+            font-size:0.69rem;
+            font-weight:700;
+            letter-spacing:0.02em;
+            text-transform:uppercase;
+            padding:2px 9px;
+            margin:5px 0 2px;
+        }
+        .deal-last-task {
+            margin-top:6px;
+            padding:6px 8px;
+            border-radius:8px;
+            font-size:0.74rem;
+            border:1px solid #dde6f3;
+            background:#f8fbff;
+            color:#40566d;
+        }
+        .deal-last-task.done {
+            background:#eaf9ef;
+            border-color:#bfe7ca;
+            color:#1f6f43;
+            font-weight:600;
+        }
+        .deal-last-task.open {
+            background:#fff6e8;
+            border-color:#f2ddaf;
+            color:#815d16;
+        }
+        .deal-last-task.empty {
+            background:#f6f8fb;
+            border-color:#e2e8f0;
+            color:#64748b;
+        }
+        .deal-linked-task-row {
+            display:flex;
+            justify-content:space-between;
+            gap:8px;
+            font-size:0.76rem;
+            margin-bottom:4px;
+        }
+        .deal-linked-task-row.done {
+            background:#eefbf2;
+            border:1px solid #cdecd6;
+            border-radius:6px;
+            padding:5px 6px;
+        }
         .deal-details-panel {
             margin-top: 6px;
             border: 1px solid #e8edf5;
@@ -356,7 +409,7 @@
         .stat-number { font-size: 1.8rem; font-weight: bold; color: var(--dark); }
         .stat-label { font-size: 0.8rem; color: #7f8c8d; text-transform: uppercase; }
         .stats-modal-list { display: flex; flex-direction: column; gap: 8px; }
-        .stats-modal-item { border: 1px solid #eee; border-left: 4px solid var(--primary); border-radius: 6px; padding: 10px; background: #fafafa; }
+        .stats-modal-item { border: 1px solid #eee; border-left: 4px solid var(--primary); border-radius: 6px; padding: 10px; background: #fafafa; cursor: pointer; }
         .stats-modal-item.overdue { border-left-color: var(--danger); background: #fff5f5; }
         .stats-modal-item.today { border-left-color: var(--success); background: #f0fff4; }
         .stats-modal-item.future { border-left-color: var(--primary); background: #f2f8ff; }

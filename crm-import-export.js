@@ -1,5 +1,10 @@
 ﻿// Extracted I/O module: import/export/report/file-save functions
 
+    const DB_FILE_HANDLE_DB = 'crm-file-binding-db-v1';
+    const DB_FILE_HANDLE_STORE = 'bindings';
+    const DB_FILE_HANDLE_KEY = 'main-db-json-handle';
+    let autoSaveWarnedNoPermission = false;
+
     function getDatabaseSnapshot() {
         return {
             version: 2,
@@ -18,9 +23,91 @@
         };
     }
 
+    function markDatabaseSavedAtNow() {
+        dbDirty = false;
+        dbLastFileSaveAt = Date.now();
+        try { CRMStore.set('dbLastJsonSaveAt', String(dbLastFileSaveAt)); } catch (e) {}
+        autoSaveWarnedNoPermission = false;
+    }
+
+    function isFileBindingSupported() {
+        return typeof window !== 'undefined' && typeof window.showSaveFilePicker === 'function' && typeof window.indexedDB !== 'undefined';
+    }
+
+    function openBindingDb() {
+        return new Promise((resolve, reject) => {
+            const req = indexedDB.open(DB_FILE_HANDLE_DB, 1);
+            req.onupgradeneeded = () => {
+                const db = req.result;
+                if (!db.objectStoreNames.contains(DB_FILE_HANDLE_STORE)) {
+                    db.createObjectStore(DB_FILE_HANDLE_STORE);
+                }
+            };
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = () => reject(req.error || new Error('indexedDB open failed'));
+        });
+    }
+
+    async function persistBoundFileHandle(handle) {
+        if (!isFileBindingSupported() || !handle) return;
+        const db = await openBindingDb();
+        await new Promise((resolve, reject) => {
+            const tx = db.transaction(DB_FILE_HANDLE_STORE, 'readwrite');
+            tx.objectStore(DB_FILE_HANDLE_STORE).put(handle, DB_FILE_HANDLE_KEY);
+            tx.oncomplete = () => resolve();
+            tx.onerror = () => reject(tx.error || new Error('indexedDB write failed'));
+            tx.onabort = () => reject(tx.error || new Error('indexedDB write aborted'));
+        });
+        db.close();
+    }
+
+    async function readPersistedBoundFileHandle() {
+        if (!isFileBindingSupported()) return null;
+        const db = await openBindingDb();
+        const result = await new Promise((resolve, reject) => {
+            const tx = db.transaction(DB_FILE_HANDLE_STORE, 'readonly');
+            const req = tx.objectStore(DB_FILE_HANDLE_STORE).get(DB_FILE_HANDLE_KEY);
+            req.onsuccess = () => resolve(req.result || null);
+            req.onerror = () => reject(req.error || new Error('indexedDB read failed'));
+        });
+        db.close();
+        return result;
+    }
+
+    async function getHandlePermission(handle, request = false) {
+        if (!handle || typeof handle.queryPermission !== 'function') return 'granted';
+        const opts = { mode: 'readwrite' };
+        let state = await handle.queryPermission(opts);
+        if (state === 'granted') return state;
+        if (request && typeof handle.requestPermission === 'function') {
+            state = await handle.requestPermission(opts);
+        }
+        return state;
+    }
+
+    async function restoreBoundDatabaseFileHandle() {
+        if (!isFileBindingSupported()) return;
+        if (dbFileHandle) return;
+        try {
+            const handle = await readPersistedBoundFileHandle();
+            if (!handle) return;
+            dbFileHandle = handle;
+            if (typeof updateDatabaseFileSaveIndicator === 'function') updateDatabaseFileSaveIndicator();
+        } catch (e) {
+            console.warn('Не удалось восстановить привязку файла базы:', e);
+        }
+    }
+
+    async function writeSnapshotToHandle(handle) {
+        const writable = await handle.createWritable();
+        await writable.write(JSON.stringify(getDatabaseSnapshot(), null, 2));
+        await writable.close();
+    }
+
     async function saveDatabaseFile() {
         if (!window.showSaveFilePicker) {
             exportJSON();
+            markDatabaseSavedAtNow();
             if (typeof updateDatabaseFileSaveIndicator === 'function') updateDatabaseFileSaveIndicator();
             alert('Браузер не поддерживает прямую перезапись файла. Скачан обычный JSON.');
             return;
@@ -32,34 +119,44 @@
                     suggestedName: `crm_backup_${new Date().toISOString().slice(0,10)}.json`,
                     types: [{ description: 'JSON', accept: { 'application/json': ['.json'] } }]
                 });
+                await persistBoundFileHandle(dbFileHandle);
             }
 
-            const writable = await dbFileHandle.createWritable();
-            await writable.write(JSON.stringify(getDatabaseSnapshot(), null, 2));
-            await writable.close();
-            dbDirty = false;
-            dbLastFileSaveAt = Date.now();
+            const permission = await getHandlePermission(dbFileHandle, true);
+            if (permission !== 'granted') throw new Error('File permission denied');
+            await writeSnapshotToHandle(dbFileHandle);
+            markDatabaseSavedAtNow();
             if (typeof updateDatabaseFileSaveIndicator === 'function') updateDatabaseFileSaveIndicator();
             alert('База сохранена в файл.');
         } catch (e) {
             if (e && e.name === 'AbortError') return;
             console.error(e);
+            exportJSON();
+            markDatabaseSavedAtNow();
             if (typeof updateDatabaseFileSaveIndicator === 'function') updateDatabaseFileSaveIndicator();
-            alert('Не удалось сохранить файл базы.');
+            alert('Не удалось записать в привязанный файл. База сохранена как обычный JSON.');
         }
     }
 
     async function autoSaveToBoundFile() {
         if (!dbFileHandle || !dbDirty) return;
         try {
-            const writable = await dbFileHandle.createWritable();
-            await writable.write(JSON.stringify(getDatabaseSnapshot(), null, 2));
-            await writable.close();
-            dbDirty = false;
-            dbLastFileSaveAt = Date.now();
+            const permission = await getHandlePermission(dbFileHandle, false);
+            if (permission !== 'granted') {
+                if (!autoSaveWarnedNoPermission && typeof showToast === 'function') {
+                    showToast('Автосохранение в файл требует подтверждения: нажмите "Сохранить файл" один раз.', 'warning', 5000);
+                    autoSaveWarnedNoPermission = true;
+                }
+                return;
+            }
+            await writeSnapshotToHandle(dbFileHandle);
+            markDatabaseSavedAtNow();
             if (typeof updateDatabaseFileSaveIndicator === 'function') updateDatabaseFileSaveIndicator();
         } catch(e) {
-            // Ignore background autosave failures.
+            if (!autoSaveWarnedNoPermission && typeof showToast === 'function') {
+                showToast('Автосохранение в привязанный файл не удалось. Нажмите "Сохранить файл".', 'warning', 5000);
+                autoSaveWarnedNoPermission = true;
+            }
         }
     }
 
@@ -260,8 +357,14 @@
                     }
 
                     saveData();
+                    renderClientList();
+                    renderGlobalTasks();
+                    renderDealsSidebar();
+                    renderCallQueue();
+                    updateCallSessionInfo();
+                    updateDashboard();
+                    updateDatabaseFileSaveIndicator();
                     alert('✅ Данные загружены!\nКлиентов: ' + clients.length + '\nЗаписей: ' + history.length + '\nСделок: ' + deals.length + '\nКасаний: ' + touches.length);
-                    location.reload();
 
                 } else if (data.clients && Array.isArray(data.clients)) {
                     console.log("Обнаружен формат импорта. Начинаю конвертацию...");
@@ -405,8 +508,14 @@
                     }
                     
                     saveData();
-                    alert(`✅ УСПЕШНО!\nИмпортировано:\n- Клиентов: ${clients.length}\n- Записей истории/задач: ${history.length}\n\nНажмите ОК, чтобы перезагрузить страницу.`);
-                    location.reload();
+                    renderClientList();
+                    renderGlobalTasks();
+                    renderDealsSidebar();
+                    renderCallQueue();
+                    updateCallSessionInfo();
+                    updateDashboard();
+                    updateDatabaseFileSaveIndicator();
+                    alert(`✅ УСПЕШНО!\nИмпортировано:\n- Клиентов: ${clients.length}\n- Записей истории/задач: ${history.length}`);
 
                 } else {
                     alert('❌ Неверный формат файла');

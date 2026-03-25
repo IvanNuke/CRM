@@ -49,6 +49,7 @@
     let customNotificationSoundUrl = '';
     let customNotificationSoundName = '';
     let clientFillWizardState = { active: false, queue: [], index: 0 };
+    let pendingBoundFileSaveTimer = 0;
     const baseDocumentTitle = document.title;
     const SIDEBAR_WIDTH_STORAGE_KEY = 'sidebarWidthPx';
     const SIDEBAR_WIDTH_DEFAULT = 560;
@@ -69,6 +70,7 @@
         const storedClientTaskTouched = CRMStore.get('clientTaskTouched');
         const storedClientLastContact = CRMStore.get('clientLastContact');
         const storedCallSessionLog = CRMStore.get('callSessionLog');
+        const storedDbLastJsonSaveAt = CRMStore.get('dbLastJsonSaveAt');
         const classMigrationDone = CRMStore.get('classMigrationDone');
         clients = storedClients ? JSON.parse(storedClients) : [];
         history = storedHistory ? JSON.parse(storedHistory) : [];
@@ -140,6 +142,10 @@
                 }
             } catch(e) {}
         }
+        if (storedDbLastJsonSaveAt) {
+            const ts = parseInt(storedDbLastJsonSaveAt, 10);
+            if (Number.isFinite(ts) && ts > 0) dbLastFileSaveAt = ts;
+        }
         if (!clientTypeOptions.some(v => v.toLowerCase() === 'не указан')) {
             clientTypeOptions.unshift('Не указан');
         }
@@ -182,6 +188,9 @@
         updateCallSessionInfo();
         updateDashboard();
         updateDatabaseFileSaveIndicator();
+        if (typeof restoreBoundDatabaseFileHandle === 'function') {
+            void restoreBoundDatabaseFileHandle();
+        }
         initSidebarResize();
         dashboardWeekStart = getWeekStartIso(new Date());
         
@@ -307,6 +316,7 @@
             startClientFillWizard: () => startClientFillWizard(),
             openGlobalTaskModal: () => openGlobalTaskModal(),
             openCreateDealPrompt: () => openCreateDealPrompt(),
+            saveDealModal: () => saveDealModal(),
             clearGlobalTaskDateFilter: () => clearGlobalTaskDateFilter(),
             startCallSession: () => startCallSession(),
             stopCallSession: () => stopCallSession(),
@@ -324,6 +334,8 @@
             cancelMarkTaskDoneFromModal: () => cancelMarkTaskDoneFromModal(),
             markTaskDoneFromModal: () => markTaskDoneFromModal(),
             toggleTaskViewProgressPanel: () => toggleTaskViewProgressPanel(),
+            taskViewOpenReschedule: () => taskViewOpenReschedule(),
+            taskViewOpenNoAnswerReschedule: () => taskViewOpenNoAnswerReschedule(),
             saveTaskViewProgressDraft: () => saveTaskViewProgressDraft(),
             cancelTaskViewProgressDraft: () => cancelTaskViewProgressDraft(),
             createDealFromTaskModal: () => createDealFromTaskModal(),
@@ -350,6 +362,8 @@
             openDealFromDashboard: (el) => openDealFromDashboard(String(el.dataset.dealId || '')),
             dealOpenClient: (el) => dealOpenClient(String(el.dataset.clientId || '')),
             dealOpenTask: (el) => dealOpenTask(String(el.dataset.taskId || '')),
+            openDealModal: (el) => openDealModal(String(el.dataset.dealId || '')),
+            deleteDeal: (el) => deleteDeal(String(el.dataset.dealId || '')),
             dealDialPhone: (el) => dealDialPhone(String(el.dataset.phone || '')),
             dealWhatsApp: (el) => dealWhatsApp(String(el.dataset.phone || '')),
             dealTelegram: (el) => dealTelegram(String(el.dataset.phone || ''))
@@ -423,6 +437,12 @@
                 renderDealsSidebar();
             });
         }
+        const dealClientSearch = document.getElementById('dealClientSearch');
+        if (dealClientSearch) {
+            dealClientSearch.addEventListener('input', () => renderDealClientOptions());
+            dealClientSearch.addEventListener('change', () => applyDealClientFromSearch());
+            dealClientSearch.addEventListener('blur', () => applyDealClientFromSearch());
+        }
 
         const cqClass = document.getElementById('cqClassFilter');
         if (cqClass) cqClass.addEventListener('change', () => renderCallQueue());
@@ -492,10 +512,24 @@
         CRMStore.setJSON('callSessionLog', callSessionLog);
     }
 
-    function saveData() {
-        writeStateToLocalStorage();
+    function queueAutoSaveToBoundFile(delayMs = 1200) {
+        if (!dbFileHandle) return;
+        if (pendingBoundFileSaveTimer) clearTimeout(pendingBoundFileSaveTimer);
+        pendingBoundFileSaveTimer = setTimeout(() => {
+            pendingBoundFileSaveTimer = 0;
+            void autoSaveToBoundFile();
+        }, Math.max(300, parseInt(delayMs, 10) || 1200));
+    }
+
+    function markDatabaseDirty() {
         dbDirty = true;
         updateDatabaseFileSaveIndicator();
+        queueAutoSaveToBoundFile();
+    }
+
+    function saveData() {
+        writeStateToLocalStorage();
+        markDatabaseDirty();
         updateDashboard();
         if(currentSidebarTab === 'dashboard') {
             renderDashboardTimeline();
@@ -1081,7 +1115,7 @@
         openTaskView(taskId);
     }
 
-    function postponeTaskWithTemp(taskId, targetDateTime, reason = '') {
+    function postponeTaskWithTemp(taskId, targetDateTime, reason = '', eventType = 'POSTPONE') {
         const idx = history.findIndex(h => String(h.id) === String(taskId));
         if (idx === -1) return false;
         const task = history[idx];
@@ -1090,7 +1124,7 @@
         if (isNaN(target.getTime())) return false;
         const oldDueTs = new Date(String(task.due_at || buildTaskDueIso(task) || '')).getTime();
         if (Number.isFinite(oldDueTs) && target.getTime() > oldDueTs) {
-            applyPostpone(task, target.toISOString(), reason, new Date());
+            applyPostpone(task, target.toISOString(), reason, new Date(), eventType);
         } else {
             setTaskDueDateTime(task, target);
             syncWorkItemDueAt(task);
@@ -1115,22 +1149,39 @@
         const task = history.find(h => String(h.id) === String(taskId));
         if (!task) return;
         document.getElementById('rsTaskId').value = task.id;
+        document.getElementById('rsEventType').value = 'POSTPONE';
+        document.getElementById('rsReason').value = 'Ручной перенос срока';
+        const titleEl = document.getElementById('rescheduleTaskModalTitle');
+        if (titleEl) titleEl.textContent = 'Перенести срок задачи';
         document.getElementById('rsDate').value = task.nextDate || getTodayIsoLocal();
         document.getElementById('rsTime').value = task.nextTime || getNowTimeLocalHHMM();
-        document.getElementById('rescheduleTaskModal').classList.remove('hidden');
+        showModalOnTop('rescheduleTaskModal');
+    }
+
+    function configureRescheduleTaskModal(taskId, eventType = 'POSTPONE', reason = 'Ручной перенос срока', title = 'Перенести срок задачи') {
+        openRescheduleTaskModal(taskId);
+        const eventTypeInput = document.getElementById('rsEventType');
+        const reasonInput = document.getElementById('rsReason');
+        const titleEl = document.getElementById('rescheduleTaskModalTitle');
+        if (eventTypeInput) eventTypeInput.value = String(eventType || 'POSTPONE');
+        if (reasonInput) reasonInput.value = String(reason || '');
+        if (titleEl) titleEl.textContent = String(title || 'Перенести срок задачи');
     }
 
     function saveRescheduledTask() {
         const id = document.getElementById('rsTaskId').value;
         const date = document.getElementById('rsDate').value;
         const time = document.getElementById('rsTime').value;
+        const eventType = String(document.getElementById('rsEventType')?.value || 'POSTPONE').trim() || 'POSTPONE';
+        const reason = String(document.getElementById('rsReason')?.value || 'Ручной перенос срока').trim() || 'Ручной перенос срока';
         if (!id || !date) return alert('Укажите дату выполнения');
         const dt = new Date(`${date}T${time || '00:00'}`);
         if (isNaN(dt.getTime())) return alert('Некорректная дата/время');
-        if (!postponeTaskWithTemp(id, dt, 'Ручной перенос срока')) return;
+        if (!postponeTaskWithTemp(id, dt, reason, eventType)) return;
         saveData();
         closeModal('rescheduleTaskModal');
         closeModal('dueTasksModal');
+        if (!document.getElementById('taskViewModal')?.classList.contains('hidden')) openTaskView(id);
     }
 
 
@@ -1879,7 +1930,7 @@
         badgeWrap.replaceChildren();
         badgeWrap.appendChild(createTempBadgeElement(item, now));
         reason.textContent = getTempReason(item, now);
-        document.querySelectorAll('#tvHeatPanel [data-action="taskViewPostponeQuick"], #tvHeatPanel [data-action="taskViewAddProgressEvent"], #tvHeatPanel [data-action="toggleTaskViewProgressPanel"]')
+        document.querySelectorAll('#tvHeatPanel [data-action="taskViewPostponeQuick"], #tvHeatPanel [data-action="taskViewAddProgressEvent"], #tvHeatPanel [data-action="toggleTaskViewProgressPanel"], #tvHeatPanel [data-action="taskViewOpenReschedule"], #tvHeatPanel [data-action="taskViewOpenNoAnswerReschedule"]')
             .forEach(btn => { btn.disabled = isDone; });
 
         eventsList.replaceChildren();
@@ -1904,7 +1955,7 @@
             row.appendChild(head);
 
             const metaText = [];
-            if (evt.type === 'POSTPONE') {
+            if (evt.type === 'POSTPONE' || evt.type === 'CALL_NO_ANSWER') {
                 if (evt.meta?.weight) metaText.push(`+${evt.meta.weight}`);
                 if (evt.meta?.old_due_at || evt.meta?.new_due_at) {
                     metaText.push(`срок: ${evt.meta.old_due_at ? new Date(evt.meta.old_due_at).toLocaleString('ru-RU') : '—'} -> ${evt.meta.new_due_at ? new Date(evt.meta.new_due_at).toLocaleString('ru-RU') : '—'}`);
@@ -2144,6 +2195,12 @@
             bg = '#eafaf0';
             color = '#1f6f43';
             border = '#bfe8cf';
+        } else if (dbLastFileSaveAt && !dbDirty) {
+            const timeText = new Date(dbLastFileSaveAt).toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            text = `Файл: JSON сохранен ${timeText} (без привязки)`;
+            bg = '#eef8ff';
+            color = '#0f4f7a';
+            border = '#cde4f8';
         } else if (dbDirty) {
             text = 'Файл: не привязан (перенос: нет JSON)';
             bg = '#fff0c2';
@@ -2226,6 +2283,7 @@
         const activeTabBtn = tabBtn || document.querySelector(`.content-tab[data-tab="${tab}"]`);
         if (activeTabBtn) activeTabBtn.classList.add('active');
         document.getElementById('tab-tasks-content').classList.toggle('hidden', tab !== 'tasks');
+        document.getElementById('tab-deals-content').classList.toggle('hidden', tab !== 'deals');
         document.getElementById('tab-history-content').classList.toggle('hidden', tab !== 'history');
     }
 
@@ -2264,33 +2322,7 @@
     }
 
     function openCreateDealPrompt() {
-        let selectedClient = null;
-        if (currentClientId) {
-            selectedClient = clients.find(c => String(c.id) === String(currentClientId)) || null;
-        }
-        const clientNameHint = selectedClient ? ` [${selectedClient.name}]` : '';
-        const title = prompt(`Название сделки${clientNameHint}:`, selectedClient ? `Сделка: ${selectedClient.name}` : 'Новая сделка');
-        if (title === null) return;
-        const safeTitle = String(title || '').trim();
-        if (!safeTitle) return showToast('Название сделки обязательно', 'warn');
-
-        const record = ensureDealRecord({
-            id: generateDealId(),
-            client_id: String(selectedClient?.id || ''),
-            title: safeTitle,
-            category: 'other',
-            stage: 'new',
-            status: 'active',
-            created_at: new Date().toISOString(),
-            next_touch_at: addDaysToIso(new Date().toISOString(), 2),
-            notes: '',
-            followup_step: 1
-        });
-        deals.unshift(record);
-        currentDealId = record.id;
-        saveData();
-        switchSidebarTab('deals');
-        showToast('Сделка создана', 'success');
+        openDealModal('');
     }
 
     function getDealTimeBucket(deal, now = new Date()) {
@@ -2331,6 +2363,294 @@
         return deals.find(d => String(d.id) === String(id)) || null;
     }
 
+    function isDealClosed(deal) {
+        const status = normalizeDealStatus(deal?.status);
+        const stage = normalizeDealStage(deal?.stage);
+        return status === 'won' || status === 'lost' || stage === 'closed';
+    }
+
+    function getTasksLinkedToDeal(deal) {
+        if (!deal) return [];
+        return history.filter(t =>
+            String(t.deal_id || '') === String(deal.id) ||
+            String(t.id || '') === String(deal.source_task_id || '')
+        );
+    }
+
+    function getLatestLinkedTaskForDeal(deal) {
+        const linked = getTasksLinkedToDeal(deal);
+        if (!linked.length) return null;
+        return linked
+            .slice()
+            .sort((a, b) => {
+                const am = getTaskMoment(a);
+                const bm = getTaskMoment(b);
+                const at = am ? am.getTime() : 0;
+                const bt = bm ? bm.getTime() : 0;
+                return bt - at;
+            })[0] || null;
+    }
+
+    function getLinkedDealForTask(task) {
+        if (!task) return null;
+        const directDealId = String(task.deal_id || '').trim();
+        if (directDealId) {
+            const direct = getDealById(directDealId);
+            if (direct) return direct;
+        }
+        return deals.find(d => String(d.source_task_id || '') === String(task.id || '')) || null;
+    }
+
+    function createTaskDealBadge(task) {
+        const linked = getLinkedDealForTask(task);
+        if (!linked) return null;
+        const badge = document.createElement('div');
+        badge.style.cssText = 'display:inline-block; margin-top:4px; font-size:0.74rem; color:#1f4b8f; background:#eaf2ff; border:1px solid #cddfff; border-radius:999px; padding:2px 8px;';
+        badge.textContent = `🏷 Сделка: ${String(linked.title || 'без названия')}`;
+        return badge;
+    }
+
+    function openDealByIdInSidebar(dealId) {
+        const safeDealId = String(dealId || '').trim();
+        if (!safeDealId) return;
+        currentDealTimingFilter = 'all';
+        currentDealCategoryFilter = 'all';
+        currentDealStageFilter = 'all';
+        currentDealId = safeDealId;
+        switchSidebarTab('deals');
+        renderDealsSidebar();
+    }
+
+    function renderDealClientOptions() {
+        const input = document.getElementById('dealClientSearch');
+        const list = document.getElementById('dealClientOptions');
+        if (!input || !list) return;
+        const q = String(input.value || '').trim().toLowerCase();
+        list.replaceChildren();
+        clients
+            .filter(c => !q || String(c.name || '').toLowerCase().includes(q))
+            .sort((a, b) => String(a.name || '').localeCompare(String(b.name || '')))
+            .slice(0, 50)
+            .forEach((client) => {
+                const opt = document.createElement('option');
+                opt.value = String(client.name || '');
+                opt.label = String(client.name || '');
+                opt.dataset.clientId = String(client.id || '');
+                list.appendChild(opt);
+            });
+    }
+
+    function populateDealContactPersonSelect(clientId, selectedContactId = '') {
+        const select = document.getElementById('dealContactPersonSelect');
+        if (!select) return;
+        const client = clients.find(c => String(c.id) === String(clientId));
+        const contacts = client && Array.isArray(client.contacts)
+            ? client.contacts.map((c, idx) => normalizeContact(c, idx)).filter(c => (c.name || '').trim() !== '')
+            : [];
+        select.replaceChildren();
+        const emptyOption = document.createElement('option');
+        emptyOption.value = '';
+        emptyOption.textContent = contacts.length ? 'Не выбрано' : 'Нет контактов';
+        select.appendChild(emptyOption);
+        contacts.forEach(contact => {
+            const opt = document.createElement('option');
+            opt.value = String(contact.id || '');
+            const role = String(contact.role || '').trim();
+            const phone = getContactPreferredPhone(contact);
+            opt.textContent = `${contact.name}${role ? ` (${role})` : ''}${phone ? ` — ${phone}` : ''}`;
+            select.appendChild(opt);
+        });
+        select.value = String(selectedContactId || '');
+    }
+
+    function applyDealClientFromSearch() {
+        const input = document.getElementById('dealClientSearch');
+        const hidden = document.getElementById('dealClientId');
+        const titleInput = document.getElementById('dealTitleInput');
+        const contactSelect = document.getElementById('dealContactPersonSelect');
+        if (!input || !hidden) return;
+        const value = String(input.value || '').trim();
+        const prevClientId = String(hidden.value || '').trim();
+        const prevContactId = String(contactSelect?.value || '').trim();
+        const matched = clients.find(c => String(c.name || '').trim().toLowerCase() === value.toLowerCase()) || null;
+        hidden.value = matched ? String(matched.id || '') : '';
+        const nextClientId = String(hidden.value || '').trim();
+        populateDealContactPersonSelect(nextClientId, nextClientId && nextClientId === prevClientId ? prevContactId : '');
+        if (matched && titleInput && !String(titleInput.value || '').trim()) {
+            titleInput.value = `Сделка: ${matched.name}`;
+        }
+    }
+
+    function openDealModal(dealId = '') {
+        const modal = document.getElementById('dealModal');
+        if (!modal) return;
+        const deal = dealId ? getDealById(dealId) : null;
+        const titleEl = document.getElementById('dealModalTitle');
+        const idInput = document.getElementById('dealFormId');
+        const clientSearch = document.getElementById('dealClientSearch');
+        const clientIdInput = document.getElementById('dealClientId');
+        const titleInput = document.getElementById('dealTitleInput');
+        const amountInput = document.getElementById('dealAmountInput');
+        const nextDateInput = document.getElementById('dealNextDateInput');
+        const statusInput = document.getElementById('dealStatusInput');
+        const stageInput = document.getElementById('dealStageInput');
+        const categoryInput = document.getElementById('dealCategoryInput');
+        const notesInput = document.getElementById('dealNotesInput');
+        if (!titleEl || !idInput || !clientSearch || !clientIdInput || !titleInput || !amountInput || !nextDateInput || !statusInput || !stageInput || !categoryInput || !notesInput) return;
+
+        renderDealClientOptions();
+        const prefillClient = deal
+            ? clients.find(c => String(c.id) === String(deal.client_id || '')) || null
+            : (currentClientId ? clients.find(c => String(c.id) === String(currentClientId)) || null : null);
+        titleEl.textContent = deal ? 'Редактирование сделки' : 'Новая сделка';
+        idInput.value = deal ? String(deal.id || '') : '';
+        clientIdInput.value = prefillClient ? String(prefillClient.id || '') : '';
+        clientSearch.value = prefillClient ? String(prefillClient.name || '') : '';
+        titleInput.value = deal ? String(deal.title || '') : (prefillClient ? `Сделка: ${prefillClient.name}` : '');
+        amountInput.value = deal && Number(deal.amount || 0) > 0 ? String(deal.amount) : '';
+        nextDateInput.value = deal ? getDateOnlyFromIso(deal.next_touch_at) : getDateOnlyFromIso(addDaysToIso(new Date().toISOString(), 2));
+        statusInput.value = deal ? String(deal.status || 'active') : 'active';
+        stageInput.value = deal ? String(deal.stage || 'new') : 'new';
+        categoryInput.value = deal ? String(deal.category || 'other') : 'other';
+        notesInput.value = deal ? String(deal.notes || '') : '';
+        populateDealContactPersonSelect(clientIdInput.value, deal ? String(deal.contact_person_id || '') : '');
+        modal.classList.remove('hidden');
+    }
+
+    function saveDealModal() {
+        const dealId = String(document.getElementById('dealFormId')?.value || '').trim();
+        const clientId = String(document.getElementById('dealClientId')?.value || '').trim();
+        const title = String(document.getElementById('dealTitleInput')?.value || '').trim();
+        const amountRaw = String(document.getElementById('dealAmountInput')?.value || '').trim().replace(',', '.');
+        const nextDateRaw = String(document.getElementById('dealNextDateInput')?.value || '').trim();
+        const status = String(document.getElementById('dealStatusInput')?.value || 'active');
+        const stage = String(document.getElementById('dealStageInput')?.value || 'new');
+        const category = String(document.getElementById('dealCategoryInput')?.value || 'other');
+        const notes = String(document.getElementById('dealNotesInput')?.value || '').trim();
+        const contactPersonId = String(document.getElementById('dealContactPersonSelect')?.value || '').trim();
+        if (!title) return showToast('Название сделки обязательно', 'warn');
+        if (!clientId) return showToast('Выберите контрагента из базы', 'warn');
+        const nextTouchAt = /^\d{4}-\d{2}-\d{2}$/.test(nextDateRaw) ? new Date(`${nextDateRaw}T10:00:00`).toISOString() : '';
+        const amount = Math.max(0, Number(amountRaw) || 0);
+        if (dealId) {
+            const idx = deals.findIndex(d => String(d.id) === dealId);
+            if (idx < 0) return showToast('Сделка не найдена', 'error');
+            deals[idx] = ensureDealRecord({
+                ...deals[idx],
+                client_id: clientId,
+                contact_person_id: contactPersonId,
+                title,
+                amount,
+                status,
+                stage: status === 'active' ? stage : 'closed',
+                category,
+                next_touch_at: status === 'active' ? nextTouchAt : '',
+                notes
+            });
+            currentDealId = dealId;
+        } else {
+            const record = ensureDealRecord({
+                id: generateDealId(),
+                client_id: clientId,
+                contact_person_id: contactPersonId,
+                title,
+                amount,
+                category,
+                stage: status === 'active' ? stage : 'closed',
+                status,
+                created_at: new Date().toISOString(),
+                next_touch_at: status === 'active' ? nextTouchAt : '',
+                notes,
+                followup_step: 1
+            });
+            deals.unshift(record);
+            currentDealId = record.id;
+        }
+        closeModal('dealModal');
+        saveData();
+        switchSidebarTab('deals');
+        showToast(dealId ? 'Сделка обновлена' : 'Сделка создана', 'success');
+    }
+
+    function deleteDeal(dealId) {
+        const safeDealId = String(dealId || '').trim();
+        if (!safeDealId) return;
+        const idx = deals.findIndex(d => String(d.id) === safeDealId);
+        if (idx < 0) return showToast('Сделка не найдена', 'error');
+        if (!confirm('Удалить сделку? Связанные задачи останутся, но отвязка будет сохранена.')) return;
+        deals.splice(idx, 1);
+        history.forEach(item => {
+            if (String(item.deal_id || '') === safeDealId) item.deal_id = '';
+        });
+        touches = touches.filter(t => String(t.deal_id || '') !== safeDealId);
+        if (String(currentDealId || '') === safeDealId) currentDealId = '';
+        closeModal('dealModal');
+        saveData();
+        renderDealsSidebar();
+        showToast('Сделка удалена', 'success');
+    }
+
+    function openDealLinkedToTask(taskId, createIfMissing = true) {
+        const task = history.find(h => String(h.id) === String(taskId));
+        if (!task) return showToast('Задача не найдена', 'error');
+        const linked = getLinkedDealForTask(task);
+        if (linked) {
+            if (String(task.deal_id || '') !== String(linked.id || '')) {
+                task.deal_id = String(linked.id || '');
+                saveData();
+            }
+            openDealByIdInSidebar(linked.id);
+            return;
+        }
+        if (!createIfMissing) {
+            showToast('Для этой задачи сделка не привязана', 'warn');
+            return;
+        }
+        openCreateDealFromTask(taskId);
+    }
+
+    function createTaskFromDeal(dealId) {
+        const deal = getDealById(dealId);
+        if (!deal) return showToast('Сделка не найдена', 'error');
+        const clientId = String(deal.client_id || '').trim();
+        if (!clientId) return showToast('У сделки не указан контрагент', 'warn');
+
+        const defaultDate = getDateOnlyFromIso(deal.next_touch_at) || getTodayIsoLocal();
+        const prefill = String(deal.title || '').trim() || 'Сделка';
+        const topicRaw = prompt('Тема задачи по сделке:', `Сделка: ${prefill}`);
+        if (topicRaw === null) return;
+        const topic = String(topicRaw || '').trim();
+        if (!topic) return showToast('Тема задачи обязательна', 'warn');
+
+        const touchedTs = Date.now();
+        const taskRecord = {
+            id: `task_${touchedTs}_${Math.random().toString(36).slice(2, 7)}`,
+            clientId,
+            deal_id: String(deal.id || ''),
+            contactPersonId: String(deal.contact_person_id || ''),
+            date: defaultDate,
+            time: '',
+            type: 'Задача по сделке',
+            result: '',
+            desc: topic,
+            nextDate: defaultDate,
+            nextTime: '',
+            nextStep: topic,
+            taskStatus: 'new',
+            status: 'active',
+            completedAt: '',
+            completedDate: '',
+            completedTime: '',
+            modifiedAt: touchedTs
+        };
+        ensureWorkItemTempFields(taskRecord, new Date(touchedTs));
+        syncWorkItemDueAt(taskRecord);
+        history.unshift(taskRecord);
+        touchClientTaskActivity(clientId, touchedTs);
+        saveData();
+        showToast('Задача создана и привязана к сделке', 'success');
+    }
+
     function ensureDealsDelegation() {
         const list = document.getElementById('dealsList');
         const details = document.getElementById('dealDetailsPanel');
@@ -2346,10 +2666,9 @@
                 const btn = e.target.closest('[data-deal-action]');
                 if (btn && item.contains(btn)) {
                     const action = String(btn.dataset.dealAction || '');
-                    if (action === 'touch') return quickAddDealTouch(dealId);
-                    if (action === 'snooze') return quickSnoozeDeal(dealId);
-                    if (action === 'won') return closeDealQuick(dealId, 'won');
-                    if (action === 'lost') return closeDealQuick(dealId, 'lost');
+                    if (action === 'create-task') return createTaskFromDeal(dealId);
+                    if (action === 'edit') return openDealModal(dealId);
+                    if (action === 'delete') return deleteDeal(dealId);
                 }
                 renderDealsSidebar();
             });
@@ -2362,16 +2681,10 @@
                 const action = String(btn.dataset.dealDetailAction || '');
                 const dealId = String(btn.dataset.dealId || currentDealId || '');
                 if (!dealId) return;
-                if (action === 'touch-keep') return quickAddDealTouch(dealId, 'держим текущую цену, готовы обсудить объем');
-                if (action === 'touch-soft') return quickAddDealTouch(dealId, 'можем аккуратно уступить при подтверждении объема');
-                if (action === 'touch-terms') return quickAddDealTouch(dealId, 'можем поменять условия оплаты/срока поставки');
-                if (action === 'touch') return quickAddDealTouch(dealId);
-                if (action === 'snooze') return quickSnoozeDeal(dealId);
-                if (action === 'won') return closeDealQuick(dealId, 'won');
-                if (action === 'lost') return closeDealQuick(dealId, 'lost');
+                if (action === 'create-task') return createTaskFromDeal(dealId);
+                if (action === 'edit') return openDealModal(dealId);
+                if (action === 'delete') return deleteDeal(dealId);
                 if (action === 'save-meta') return saveDealMetaFromDetails(dealId);
-                if (action === 'edit-touch') return openEditDealTouchModal(String(btn.dataset.touchId || ''));
-                if (action === 'delete-touch') return deleteDealTouch(String(btn.dataset.touchId || ''), dealId);
             });
         }
     }
@@ -2697,8 +3010,13 @@
     function openCreateDealFromTask(taskId) {
         const task = history.find(h => String(h.id) === String(taskId));
         if (!task) return showToast('Задача не найдена', 'error');
-        const existing = deals.find(d => String(d.source_task_id || '') === String(task.id || ''));
-        if (existing) return showToast('Сделка из этой задачи уже создана', 'warn');
+        const existing = getLinkedDealForTask(task);
+        if (existing) {
+            const idxExisting = history.findIndex(h => String(h.id) === String(task.id));
+            if (idxExisting >= 0) history[idxExisting].deal_id = String(existing.id || '');
+            openDealByIdInSidebar(existing.id);
+            return showToast('Для задачи уже есть привязанная сделка', 'info');
+        }
         const client = clients.find(c => String(c.id) === String(task.clientId)) || null;
         const titlePrefill = String(task.nextStep || task.desc || '').trim() || `Сделка: ${client?.name || 'контрагент'}`;
         const customTitle = prompt('Название сделки из задачи:', titlePrefill);
@@ -2710,6 +3028,7 @@
             title: safeTitle,
             stage: 'calc_sent'
         });
+        deal.contact_person_id = String(task.contactPersonId || '');
         deals.unshift(deal);
         currentDealId = deal.id;
         const idx = history.findIndex(h => String(h.id) === String(task.id));
@@ -2725,19 +3044,16 @@
         panel.replaceChildren();
         const deal = getDealById(dealId);
         if (!deal) {
-            panel.innerHTML = '<div class="deal-details-meta">Выберите сделку, чтобы увидеть карточку и касания.</div>';
+            panel.innerHTML = '<div class="deal-details-meta">Выберите сделку, чтобы увидеть карточку и связанные задачи.</div>';
             return;
         }
         const client = clients.find(c => String(c.id) === String(deal.client_id));
-        const bestPhone = client ? getClientBestPhone(client) : '';
-        const linkedTasks = history
-            .filter(t => String(t.deal_id || '') === String(deal.id) || String(t.id || '') === String(deal.source_task_id || ''))
+        const contact = client && Array.isArray(client.contacts)
+            ? client.contacts.map((item, idx) => normalizeContact(item, idx)).find(item => String(item.id || '') === String(deal.contact_person_id || '')) || null
+            : null;
+        const linkedTasks = getTasksLinkedToDeal(deal)
             .sort((a, b) => String(getExecutionDate(b) || '').localeCompare(String(getExecutionDate(a) || '')))
             .slice(0, 6);
-        const dealTouches = touches
-            .filter(t => String(t.deal_id) === String(deal.id))
-            .map(t => ensureTouchRecord(t))
-            .sort((a, b) => String(b.created_at || '').localeCompare(String(a.created_at || '')));
 
         const title = document.createElement('h4');
         title.className = 'deal-details-title';
@@ -2745,31 +3061,21 @@
         const meta = document.createElement('div');
         meta.className = 'deal-details-meta';
         const amountText = Number(deal.amount || 0) > 0 ? ` · сумма ${Number(deal.amount).toLocaleString('ru-RU')} ₽` : '';
-        meta.textContent = `${client ? client.name : 'Без клиента'} · ${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}${amountText} · next ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
+        meta.textContent = `${client ? client.name : 'Без клиента'} · ${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}${amountText} · срок ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
+
+        const contactMeta = document.createElement('div');
+        contactMeta.className = 'deal-details-meta';
+        const contactPhone = contact ? getContactPreferredPhone(contact) : '';
+        contactMeta.textContent = contact
+            ? `Контактное лицо: ${contact.name}${contactPhone ? ` · ${contactPhone}` : ''}`
+            : 'Контактное лицо: не выбрано';
 
         const actions = document.createElement('div');
         actions.className = 'deal-item-actions';
         actions.innerHTML = `
-            <button type="button" class="btn-primary btn-sm" data-deal-detail-action="touch" data-deal-id="${escapeHtml(String(deal.id))}">Касание</button>
-            <button type="button" class="btn-warning btn-sm" data-deal-detail-action="snooze" data-deal-id="${escapeHtml(String(deal.id))}">Перенести</button>
-            <button type="button" class="btn-success btn-sm" data-deal-detail-action="won" data-deal-id="${escapeHtml(String(deal.id))}">Won</button>
-            <button type="button" class="btn-danger btn-sm" data-deal-detail-action="lost" data-deal-id="${escapeHtml(String(deal.id))}">Lost</button>
-        `;
-
-        const templates = document.createElement('div');
-        templates.className = 'deal-item-actions';
-        templates.innerHTML = `
-            <button type="button" class="btn-sm btn-primary" data-deal-detail-action="touch-keep" data-deal-id="${escapeHtml(String(deal.id))}">Держим цену</button>
-            <button type="button" class="btn-sm btn-warning" data-deal-detail-action="touch-soft" data-deal-id="${escapeHtml(String(deal.id))}">Уступаем аккуратно</button>
-            <button type="button" class="btn-sm btn-success" data-deal-detail-action="touch-terms" data-deal-id="${escapeHtml(String(deal.id))}">Меняем условия</button>
-        `;
-
-        const comm = document.createElement('div');
-        comm.className = 'deal-item-actions';
-        comm.innerHTML = `
-            <button type="button" class="btn-sm btn-success" data-action="dealDialPhone" data-phone="${escapeHtml(bestPhone)}">Позвонить</button>
-            <button type="button" class="btn-sm btn-primary" data-action="dealWhatsApp" data-phone="${escapeHtml(bestPhone)}">WhatsApp</button>
-            <button type="button" class="btn-sm btn-warning" data-action="dealTelegram" data-phone="${escapeHtml(bestPhone)}">Telegram</button>
+            <button type="button" class="btn-primary btn-sm" data-deal-detail-action="create-task" data-deal-id="${escapeHtml(String(deal.id))}">+ Создать задачу</button>
+            <button type="button" class="btn-primary btn-sm" data-deal-detail-action="edit" data-deal-id="${escapeHtml(String(deal.id))}">Редактировать</button>
+            <button type="button" class="btn-danger btn-sm" data-deal-detail-action="delete" data-deal-id="${escapeHtml(String(deal.id))}">Удалить</button>
             ${client ? `<button type="button" class="btn-sm btn-primary" data-action="dealOpenClient" data-client-id="${escapeHtml(String(client.id || ''))}">Карточка клиента</button>` : ''}
         `;
 
@@ -2802,34 +3108,17 @@
             <button type="button" class="btn-primary btn-sm" data-deal-detail-action="save-meta" data-deal-id="${escapeHtml(String(deal.id))}" style="grid-column:1 / span 2;">Сохранить параметры сделки</button>
         `;
 
-        const list = document.createElement('div');
-        list.className = 'deal-touch-list';
-        if (!dealTouches.length) {
-            const empty = document.createElement('div');
-            empty.className = 'deal-details-meta';
-            empty.textContent = 'Касаний пока нет';
-            list.appendChild(empty);
-        } else {
-            dealTouches.slice(0, 15).forEach((touch) => {
-                const item = document.createElement('div');
-                item.className = 'deal-touch-item';
-                const head = document.createElement('div');
-                head.className = 'deal-touch-item-head';
-                head.innerHTML = `<span>${formatDateRu(String(touch.created_at || '').split('T')[0] || '')} · ${getTouchTypeLabel(touch.touch_type)}</span><span>${getTouchResultLabel(touch.result)} <button type="button" class="btn-sm btn-primary" data-deal-detail-action="edit-touch" data-touch-id="${escapeHtml(String(touch.id || ''))}" data-deal-id="${escapeHtml(String(deal.id || ''))}">Ред.</button> <button type="button" class="btn-sm btn-danger" data-deal-detail-action="delete-touch" data-touch-id="${escapeHtml(String(touch.id || ''))}" data-deal-id="${escapeHtml(String(deal.id || ''))}">Удал.</button></span>`;
-                const comment = document.createElement('div');
-                comment.className = 'deal-touch-item-comment';
-                comment.textContent = touch.comment || '—';
-                item.appendChild(head);
-                item.appendChild(comment);
-                list.appendChild(item);
-            });
-        }
-
         panel.appendChild(title);
         panel.appendChild(meta);
+        panel.appendChild(contactMeta);
+        if (isDealClosed(deal)) {
+            const detailClosedChip = document.createElement('div');
+            detailClosedChip.className = 'deal-closed-chip';
+            detailClosedChip.style.marginBottom = '8px';
+            detailClosedChip.textContent = 'Закрыта';
+            panel.appendChild(detailClosedChip);
+        }
         panel.appendChild(actions);
-        panel.appendChild(templates);
-        panel.appendChild(comm);
         panel.appendChild(metaForm);
         if (linkedTasks.length) {
             const tasksWrap = document.createElement('div');
@@ -2841,13 +3130,17 @@
             linkedTasks.forEach((t) => {
                 const row = document.createElement('div');
                 row.style.cssText = 'display:flex; justify-content:space-between; gap:8px; font-size:0.76rem; margin-bottom:4px;';
-                row.innerHTML = `<span>${escapeHtml(String(t.nextStep || t.desc || 'Задача'))}</span><button type="button" class="btn-sm btn-primary" data-action="dealOpenTask" data-task-id="${escapeHtml(String(t.id || ''))}">Открыть</button>`;
+                const taskText = String(t.nextStep || t.desc || 'Задача');
+                const doneResult = String(t.result || '').trim();
+                const suffix = t.taskStatus === 'done'
+                    ? (doneResult ? ` · Итог: ${doneResult}` : ' · Выполнена')
+                    : '';
+                row.className = t.taskStatus === 'done' ? 'deal-linked-task-row done' : 'deal-linked-task-row';
+                row.innerHTML = `<span>${escapeHtml(`${taskText}${suffix}`)}</span><button type="button" class="btn-sm btn-primary" data-action="dealOpenTask" data-task-id="${escapeHtml(String(t.id || ''))}">Открыть</button>`;
                 tasksWrap.appendChild(row);
             });
             panel.appendChild(tasksWrap);
         }
-        panel.appendChild(list);
-
         const stageInput = document.getElementById('dealDetailStageInput');
         const titleInput = document.getElementById('dealDetailTitleInput');
         const amountInput = document.getElementById('dealDetailAmountInput');
@@ -2895,13 +3188,13 @@
 
         const head = document.createElement('div');
         head.className = 'dashboard-deals-queue-head';
-        head.innerHTML = `<strong>Сделки: очередь касаний</strong><button type="button" class="btn-sm btn-primary" data-action="openDealsSidebar">Открыть раздел</button>`;
+        head.innerHTML = `<strong>Сделки: контроль сроков</strong><button type="button" class="btn-sm btn-primary" data-action="openDealsSidebar">Открыть раздел</button>`;
         wrap.appendChild(head);
 
         if (!queue.length) {
             const empty = document.createElement('div');
             empty.style.cssText = 'font-size:0.78rem; color:#64748b;';
-            empty.textContent = 'Нет касаний на сегодня/неделю.';
+            empty.textContent = 'Нет сделок со сроком на сегодня/неделю.';
             wrap.appendChild(empty);
             return;
         }
@@ -2947,6 +3240,7 @@
             if (currentDealStageFilter !== 'all' && String(d.stage) !== String(currentDealStageFilter)) return false;
             const bucket = getDealTimeBucket(d);
             if (currentDealTimingFilter === 'all') return true;
+            if (currentDealTimingFilter === 'open') return !isDealClosed(d);
             return bucket === currentDealTimingFilter;
         });
 
@@ -2981,7 +3275,7 @@
             const left = document.createElement('span');
             left.textContent = `${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}`;
             const right = document.createElement('span');
-            right.textContent = `Касание: ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
+            right.textContent = `Срок: ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
             head.appendChild(left);
             head.appendChild(right);
 
@@ -2997,21 +3291,49 @@
             meta.className = 'deal-item-meta';
             const overdueText = overdueLive > 0 ? ` · просрочка ${overdueLive} дн.` : '';
             const amountLabel = Number(deal.amount || 0) > 0 ? `${Number(deal.amount).toLocaleString('ru-RU')} ₽` : 'без суммы';
-            meta.textContent = `${amountLabel} · переносов ${deal.snooze_count}${overdueText}`;
+            meta.textContent = `${amountLabel}${overdueText}`;
+
+            let lastTaskLine = null;
+            if (isDealClosed(deal)) {
+                const latestTask = getLatestLinkedTaskForDeal(deal);
+                lastTaskLine = document.createElement('div');
+                lastTaskLine.className = 'deal-last-task';
+                if (latestTask) {
+                    const taskText = String(latestTask.nextStep || latestTask.desc || 'Задача');
+                    const doneResult = String(latestTask.result || '').trim();
+                    if (latestTask.taskStatus === 'done') {
+                        const resultText = doneResult ? `Итог: ${doneResult}` : 'Итог: Выполнена';
+                        lastTaskLine.classList.add('done');
+                        lastTaskLine.textContent = `Последняя задача: ${taskText} · ${resultText}`;
+                    } else {
+                        lastTaskLine.classList.add('open');
+                        lastTaskLine.textContent = `Последняя задача: ${taskText} · Не завершена`;
+                    }
+                } else {
+                    lastTaskLine.classList.add('empty');
+                    lastTaskLine.textContent = 'Последняя задача: нет связанной задачи';
+                }
+            }
 
             const actions = document.createElement('div');
             actions.className = 'deal-item-actions';
             actions.innerHTML = `
-                <button type="button" class="btn-primary btn-sm" data-deal-action="touch">Касание</button>
-                <button type="button" class="btn-warning btn-sm" data-deal-action="snooze">Перенести</button>
-                <button type="button" class="btn-success btn-sm" data-deal-action="won">Won</button>
-                <button type="button" class="btn-danger btn-sm" data-deal-action="lost">Lost</button>
+                <button type="button" class="btn-primary btn-sm" data-deal-action="create-task">+ Задача</button>
+                <button type="button" class="btn-primary btn-sm" data-deal-action="edit">Ред.</button>
+                <button type="button" class="btn-danger btn-sm" data-deal-action="delete">Удал.</button>
             `;
 
             item.appendChild(head);
+            if (isDealClosed(deal)) {
+                const closedChip = document.createElement('div');
+                closedChip.className = 'deal-closed-chip';
+                closedChip.textContent = 'Закрыта';
+                item.appendChild(closedChip);
+            }
             item.appendChild(clientLine);
             item.appendChild(title);
             item.appendChild(meta);
+            if (lastTaskLine) item.appendChild(lastTaskLine);
             item.appendChild(actions);
             list.appendChild(item);
         });
@@ -3740,6 +4062,12 @@
         if (clearBtn) clearBtn.style.visibility = search ? 'visible' : 'hidden';
         list.replaceChildren();
         refreshClientCompletenessSummaryUI();
+        const clientDealCountMap = new Map();
+        deals.forEach((d) => {
+            const clientId = String(d?.client_id || '').trim();
+            if (!clientId) return;
+            clientDealCountMap.set(clientId, (clientDealCountMap.get(clientId) || 0) + 1);
+        });
 
         const sortedClients = clients
             .filter(c => {
@@ -3793,7 +4121,9 @@
 
             const meta = document.createElement('div');
             meta.style.cssText = 'font-size:0.75rem; color:#7f8c8d';
-            meta.textContent = `${c.status || ''} ${typeDisplay} | Класс ${classValue}`;
+            const dealCount = clientDealCountMap.get(String(c.id)) || 0;
+            const dealsText = dealCount > 0 ? `🏷 Сделок: ${dealCount}` : 'Сделок: 0';
+            meta.textContent = `${c.status || ''} ${typeDisplay} | Класс ${classValue} | ${dealsText}`;
 
             div.appendChild(head);
             div.appendChild(meta);
@@ -3981,6 +4311,7 @@
 
         renderContacts(client);
         renderTasks(id);
+        renderClientDealsList(id);
         renderHistoryList(id);
         switchContentTab(currentContentTab);
     }
@@ -4009,7 +4340,7 @@
                     return;
                 }
                 if (action === 'deal') {
-                    openCreateDealFromTask(taskId);
+                    openDealLinkedToTask(taskId, true);
                     return;
                 }
                 if (action === 'reschedule') {
@@ -4129,6 +4460,7 @@
             const desc = document.createElement('div');
             desc.className = 'task-desc';
             desc.textContent = t.nextStep || '';
+            const dealBadge = createTaskDealBadge(t);
             const contactEl = document.createElement('div');
             contactEl.className = 'task-contact-mini';
             if (contactPerson) contactEl.textContent = `👤 ${contactPerson}`;
@@ -4144,9 +4476,10 @@
 
             const actions = document.createElement('div');
             actions.className = 'task-actions';
+            const hasLinkedDeal = Boolean(getLinkedDealForTask(t));
             const buttonDefs = [
                 ['done', 'task-action-btn done', 'Выполнено', true],
-                ['deal', 'task-action-btn deal', 'Сделка', false],
+                ['deal', 'task-action-btn deal', hasLinkedDeal ? 'Открыть сделку' : 'Создать сделку', false],
                 ['reschedule', 'task-action-btn reschedule', 'Перенести', true],
                 ['edit', 'task-action-btn edit', 'Редактировать', false],
                 ['delete', 'task-action-btn delete', 'Удалить', false]
@@ -4164,6 +4497,7 @@
             div.appendChild(dateRow);
             div.appendChild(clientEl);
             div.appendChild(desc);
+            if (dealBadge) div.appendChild(dealBadge);
             if (contactPerson) div.appendChild(contactEl);
             div.appendChild(tempMeta);
             div.appendChild(tempReason);
@@ -4244,6 +4578,7 @@
         document.getElementById('tvClientName').innerText = client ? client.name : 'Удаленный контрагент';
         document.getElementById('tvNextDateTime').innerText = formatDateTimeRu(getExecutionDate(task), getExecutionTime(task));
         document.getElementById('tvType').innerText = task.type || '-';
+        document.getElementById('tvContactPerson').innerText = getTaskContactPersonLabel(task, client) || '-';
         document.getElementById('tvResult').innerText = prevResult || '-';
         const taskTopicText = String(task.nextStep || task.desc || '-');
         document.getElementById('tvDesc').innerText = taskTopicText;
@@ -4260,9 +4595,9 @@
         doneBtn.innerText = 'Выполнено';
         const dealBtn = document.getElementById('tvDealBtn');
         if (dealBtn) {
-            const hasDeal = Boolean(String(task.deal_id || '').trim()) || deals.some(d => String(d.source_task_id || '') === String(task.id || ''));
-            dealBtn.disabled = hasDeal;
-            dealBtn.textContent = hasDeal ? 'Сделка создана' : 'Сделка';
+            const hasDeal = Boolean(getLinkedDealForTask(task));
+            dealBtn.disabled = false;
+            dealBtn.textContent = hasDeal ? 'Открыть сделку' : 'Создать сделку';
         }
         taskViewDoneConfirmMode = false;
         document.getElementById('tvDoneResultWrap').classList.add('hidden');
@@ -4271,7 +4606,7 @@
         setTaskViewProgressDraftMode(false);
         renderTaskViewHeat(task);
 
-        document.getElementById('taskViewModal').classList.remove('hidden');
+        showModalOnTop('taskViewModal');
     }
 
     function startTaskCompletionFlow(id, returnStatKind = '') {
@@ -4370,6 +4705,18 @@
         panel.classList.toggle('hidden');
     }
 
+    function taskViewOpenReschedule() {
+        const taskId = document.getElementById('tvTaskId')?.value;
+        if (!taskId) return;
+        configureRescheduleTaskModal(taskId, 'POSTPONE', 'Ручной перенос срока', 'Перенести срок задачи');
+    }
+
+    function taskViewOpenNoAnswerReschedule() {
+        const taskId = document.getElementById('tvTaskId')?.value;
+        if (!taskId) return;
+        configureRescheduleTaskModal(taskId, 'CALL_NO_ANSWER', 'Не дозвонился', 'Не дозвонился: перенести задачу');
+    }
+
     function taskViewAddProgressEvent(progressType) {
         const taskId = document.getElementById('tvTaskId')?.value;
         if (!taskId || !progressType) return;
@@ -4454,7 +4801,7 @@
         const id = document.getElementById('tvTaskId').value;
         if(!id) return;
         closeModal('taskViewModal');
-        openCreateDealFromTask(id);
+        openDealLinkedToTask(id, true);
     }
 
     function deleteTaskFromModal() {
@@ -4551,8 +4898,7 @@
         if(client && client.contacts && client.contacts[index]) {
             client.contacts[index][field] = field === 'phone' ? formatPhoneValue(value) : value;
             writeStateToLocalStorage();
-            dbDirty = true;
-            updateDatabaseFileSaveIndicator();
+            markDatabaseDirty();
         }
     }
 
@@ -4818,6 +5164,7 @@
                 const action = String(actionBtn.dataset.taskAction || '');
                 if (action === 'done') return startTaskCompletionFlow(taskId);
                 if (action === 'edit') return editHistoryItem(taskId);
+                if (action === 'deal') return openDealLinkedToTask(taskId, true);
                 if (action === 'delete') return deleteTask(taskId);
             }
 
@@ -4839,10 +5186,34 @@
             if (actionBtn && item.contains(actionBtn)) {
                 const action = String(actionBtn.dataset.historyAction || '');
                 if (action === 'edit') return editHistoryItem(historyId);
+                if (action === 'deal') return openDealLinkedToTask(historyId, false);
                 if (action === 'delete') return deleteHistoryItem(historyId);
             }
 
             editHistoryItem(historyId);
+        });
+    }
+
+    function ensureClientDealsListDelegation() {
+        const container = document.getElementById('clientDealsList');
+        if (!container || container.dataset.delegated === '1') return;
+        container.dataset.delegated = '1';
+        container.addEventListener('click', (e) => {
+            const item = e.target.closest('.deal-item');
+            if (!item || !container.contains(item)) return;
+            const dealId = String(item.dataset.dealId || '');
+            if (!dealId) return;
+
+            const actionBtn = e.target.closest('[data-client-deal-action]');
+            if (actionBtn && item.contains(actionBtn)) {
+                const action = String(actionBtn.dataset.clientDealAction || '');
+                if (action === 'open') return openDealByIdInSidebar(dealId);
+                if (action === 'edit') return openDealModal(dealId);
+                if (action === 'delete') return deleteDeal(dealId);
+                if (action === 'task') return createTaskFromDeal(dealId);
+            }
+
+            openDealByIdInSidebar(dealId);
         });
     }
 
@@ -4875,11 +5246,17 @@
             div.dataset.taskId = String(t.id);
             const actions = document.createElement('div');
             actions.className = 'item-actions';
+            const hasLinkedDeal = Boolean(getLinkedDealForTask(t));
             const btnDone = document.createElement('button');
             btnDone.className = 'task-action-btn done';
             btnDone.dataset.taskAction = 'done';
             btnDone.type = 'button';
             btnDone.textContent = 'Выполнено';
+            const btnDeal = document.createElement('button');
+            btnDeal.className = 'task-action-btn deal';
+            btnDeal.dataset.taskAction = 'deal';
+            btnDeal.type = 'button';
+            btnDeal.textContent = hasLinkedDeal ? 'Сделка' : 'Создать сделку';
             const btnEdit = document.createElement('button');
             btnEdit.className = 'task-action-btn edit';
             btnEdit.dataset.taskAction = 'edit';
@@ -4891,6 +5268,7 @@
             btnDelete.type = 'button';
             btnDelete.textContent = 'Удалить';
             actions.appendChild(btnDone);
+            actions.appendChild(btnDeal);
             actions.appendChild(btnEdit);
             actions.appendChild(btnDelete);
 
@@ -4908,6 +5286,7 @@
             const step = document.createElement('div');
             step.style.fontWeight = '600';
             step.textContent = t.nextStep || '';
+            const dealBadge = createTaskDealBadge(t);
 
             const tempRow = document.createElement('div');
             tempRow.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:6px;';
@@ -4928,10 +5307,76 @@
             div.appendChild(actions);
             div.appendChild(head);
             div.appendChild(step);
+            if (dealBadge) div.appendChild(dealBadge);
             div.appendChild(tempRow);
             div.appendChild(tempReason);
             div.appendChild(prev);
             container.appendChild(div);
+        });
+    }
+
+    function renderClientDealsList(clientId) {
+        const container = document.getElementById('clientDealsList');
+        if (!container) return;
+        ensureClientDealsListDelegation();
+        container.replaceChildren();
+
+        const clientDeals = deals
+            .map(d => ensureDealRecord(d))
+            .filter(d => String(d.client_id) === String(clientId))
+            .sort((a, b) => String(a.next_touch_at || '').localeCompare(String(b.next_touch_at || '')));
+
+        if (!clientDeals.length) {
+            const empty = document.createElement('div');
+            empty.style.cssText = 'padding:15px; text-align:center; color:#999; background:#f9f9f9; border-radius:6px;';
+            empty.textContent = 'У этого контрагента пока нет сделок';
+            container.appendChild(empty);
+            return;
+        }
+
+        clientDeals.forEach((deal) => {
+            const client = clients.find(c => String(c.id) === String(deal.client_id)) || null;
+            const contact = client && Array.isArray(client.contacts)
+                ? client.contacts.map((item, idx) => normalizeContact(item, idx)).find(item => String(item.id || '') === String(deal.contact_person_id || '')) || null
+                : null;
+            const item = document.createElement('div');
+            item.className = `deal-item ${String(currentDealId || '') === String(deal.id || '') ? 'active' : ''}`;
+            item.dataset.dealId = String(deal.id || '');
+
+            const head = document.createElement('div');
+            head.className = 'deal-item-head';
+            head.innerHTML = `<span>${escapeHtml(`${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}`)}</span><span>Срок: ${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}</span>`;
+
+            const title = document.createElement('div');
+            title.className = 'deal-item-title';
+            title.textContent = String(deal.title || 'Сделка');
+
+            const meta = document.createElement('div');
+            meta.className = 'deal-item-meta';
+            const amountLabel = Number(deal.amount || 0) > 0 ? `${Number(deal.amount).toLocaleString('ru-RU')} ₽` : 'без суммы';
+            const contactLabel = contact ? ` · Контакт: ${contact.name}` : '';
+            meta.textContent = `${amountLabel}${contactLabel}`;
+
+            const actions = document.createElement('div');
+            actions.className = 'deal-item-actions';
+            actions.innerHTML = `
+                <button type="button" class="btn-primary btn-sm" data-client-deal-action="open">Открыть</button>
+                <button type="button" class="btn-primary btn-sm" data-client-deal-action="task">+ Задача</button>
+                <button type="button" class="btn-primary btn-sm" data-client-deal-action="edit">Ред.</button>
+                <button type="button" class="btn-danger btn-sm" data-client-deal-action="delete">Удал.</button>
+            `;
+
+            item.appendChild(head);
+            if (isDealClosed(deal)) {
+                const closedChip = document.createElement('div');
+                closedChip.className = 'deal-closed-chip';
+                closedChip.textContent = 'Закрыта';
+                item.appendChild(closedChip);
+            }
+            item.appendChild(title);
+            item.appendChild(meta);
+            item.appendChild(actions);
+            container.appendChild(item);
         });
     }
 
@@ -4968,12 +5413,19 @@
             btnEdit.dataset.historyAction = 'edit';
             btnEdit.type = 'button';
             btnEdit.textContent = '✏️';
+            const btnDeal = document.createElement('button');
+            btnDeal.className = 'btn-icon';
+            btnDeal.dataset.historyAction = 'deal';
+            btnDeal.type = 'button';
+            btnDeal.title = 'Открыть сделку';
+            btnDeal.textContent = '🏷️';
             const btnDelete = document.createElement('button');
             btnDelete.className = 'btn-icon delete';
             btnDelete.dataset.historyAction = 'delete';
             btnDelete.type = 'button';
             btnDelete.textContent = '🗑';
             actions.appendChild(btnEdit);
+            actions.appendChild(btnDeal);
             actions.appendChild(btnDelete);
 
             const head = document.createElement('div');
@@ -4992,6 +5444,7 @@
             topicStrong.textContent = 'Тема:';
             topic.appendChild(topicStrong);
             topic.appendChild(document.createTextNode(` ${h.desc || h.nextStep || '-'}`));
+            const dealBadge = createTaskDealBadge(h);
 
             const result = document.createElement('div');
             result.style.cssText = 'font-size:0.9rem; margin-bottom:4px;';
@@ -5007,6 +5460,7 @@
             div.appendChild(actions);
             div.appendChild(head);
             div.appendChild(topic);
+            if (dealBadge) div.appendChild(dealBadge);
             div.appendChild(result);
             div.appendChild(done);
             container.appendChild(div);
@@ -5082,13 +5536,13 @@
             document.getElementById('inactiveCountInput').value = inactiveFilterCount;
             document.getElementById('inactiveUnitSelect').value = inactiveFilterUnit;
             renderInactiveClientsModalList();
-            document.getElementById('statsModal').classList.remove('hidden');
+            showModalOnTop('statsModal');
             return;
         }
         if (kind === 'completedNoActive') {
             title.innerText = 'Есть выполненные, нет актуальных задач';
             renderCompletedNoActiveClientsModalList();
-            document.getElementById('statsModal').classList.remove('hidden');
+            showModalOnTop('statsModal');
             return;
         }
 
@@ -5106,7 +5560,7 @@
 
         tasks.sort((a,b) => (a.nextDate || '').localeCompare(b.nextDate || '') || (a.nextTime || '').localeCompare(b.nextTime || ''));
         renderTasksStatsList(tasks, list, today, kind);
-        document.getElementById('statsModal').classList.remove('hidden');
+        showModalOnTop('statsModal');
     }
 
     function ensureStatsModalTaskListDelegation() {
@@ -5131,41 +5585,55 @@
             }
 
             const btn = e.target.closest('[data-stats-task-action]');
-            if (!btn || !container.contains(btn)) return;
-            const action = String(btn.dataset.statsTaskAction || '');
-            const taskId = String(btn.dataset.taskId || '');
-            const kind = String(btn.dataset.statKind || '');
-            const clientId = String(btn.dataset.clientId || '');
-            if (!action) return;
+            if (btn && container.contains(btn)) {
+                const action = String(btn.dataset.statsTaskAction || '');
+                const taskId = String(btn.dataset.taskId || '');
+                const kind = String(btn.dataset.statKind || '');
+                const clientId = String(btn.dataset.clientId || '');
+                if (!action) return;
 
-            if (action === 'done') {
-                if (btn.disabled || !taskId) return;
-                startTaskCompletionFlow(taskId, kind);
+                if (action === 'done') {
+                    if (btn.disabled || !taskId) return;
+                    startTaskCompletionFlow(taskId, kind);
+                    return;
+                }
+                if (action === 'edit') {
+                    if (!taskId) return;
+                    closeModal('statsModal');
+                    editHistoryItem(taskId);
+                    return;
+                }
+                if (action === 'delete') {
+                    if (!taskId) return;
+                    deleteTask(taskId);
+                    openStatModal(kind);
+                    return;
+                }
+                if (action === 'reschedule') {
+                    if (!taskId) return;
+                    closeModal('statsModal');
+                    openRescheduleTaskModal(taskId);
+                    return;
+                }
+                if (action === 'deal') {
+                    if (!taskId) return;
+                    closeModal('statsModal');
+                    openDealLinkedToTask(taskId, true);
+                    return;
+                }
+                if (action === 'client') {
+                    if (!clientId) return;
+                    closeModal('statsModal');
+                    selectClient(clientId);
+                }
                 return;
             }
-            if (action === 'edit') {
-                if (!taskId) return;
-                closeModal('statsModal');
-                editHistoryItem(taskId);
-                return;
-            }
-            if (action === 'delete') {
-                if (!taskId) return;
-                deleteTask(taskId);
-                openStatModal(kind);
-                return;
-            }
-            if (action === 'reschedule') {
-                if (!taskId) return;
-                closeModal('statsModal');
-                openRescheduleTaskModal(taskId);
-                return;
-            }
-            if (action === 'client') {
-                if (!clientId) return;
-                closeModal('statsModal');
-                selectClient(clientId);
-            }
+
+            const item = e.target.closest('.stats-modal-item');
+            if (!item || !container.contains(item)) return;
+            const taskId = String(item.dataset.taskId || '');
+            if (!taskId) return;
+            openTaskView(taskId);
         });
     }
 
@@ -5191,6 +5659,7 @@
             const isFuture = timeState === 'future' && !isDone;
             const item = document.createElement('div');
             item.className = `stats-modal-item ${isDone ? 'done' : (isOverdue ? 'overdue' : (isToday ? 'today' : (isFuture ? 'future' : '')))}`;
+            item.dataset.taskId = String(t.id || '');
             const taskId = String(t.id || '');
             const clientId = String(t.clientId || '');
 
@@ -5210,6 +5679,7 @@
             const step = document.createElement('div');
             step.style.cssText = 'font-size:0.9rem; color:#444;';
             step.textContent = t.nextStep || '-';
+            const dealBadge = createTaskDealBadge(t);
 
             const tempMeta = document.createElement('div');
             tempMeta.style.cssText = 'display:flex; align-items:center; gap:8px; margin-top:6px;';
@@ -5222,6 +5692,7 @@
 
             const actions = document.createElement('div');
             actions.className = 'stats-modal-actions';
+            const hasLinkedDeal = Boolean(getLinkedDealForTask(t));
 
             const doneBtn = document.createElement('button');
             doneBtn.type = 'button';
@@ -5262,15 +5733,24 @@
             clientBtn.dataset.clientId = clientId;
             clientBtn.textContent = 'Контрагент';
 
+            const dealBtn = document.createElement('button');
+            dealBtn.type = 'button';
+            dealBtn.className = 'task-action-btn deal';
+            dealBtn.dataset.statsTaskAction = 'deal';
+            dealBtn.dataset.taskId = taskId;
+            dealBtn.textContent = hasLinkedDeal ? 'Сделка' : 'Создать сделку';
+
             actions.appendChild(doneBtn);
             actions.appendChild(rescheduleBtn);
             actions.appendChild(editBtn);
             actions.appendChild(deleteBtn);
+            actions.appendChild(dealBtn);
             actions.appendChild(clientBtn);
 
             item.appendChild(head);
             item.appendChild(clientName);
             item.appendChild(step);
+            if (dealBadge) item.appendChild(dealBadge);
             item.appendChild(tempMeta);
             item.appendChild(tempReason);
             item.appendChild(actions);
@@ -5446,8 +5926,7 @@
         inactiveFilterCount = Math.max(1, parseInt(countInput.value, 10) || 30);
         inactiveFilterUnit = ['days','weeks','months'].includes(unitInput.value) ? unitInput.value : 'days';
         CRMStore.setJSON('inactiveFilter', { count: inactiveFilterCount, unit: inactiveFilterUnit });
-        dbDirty = true;
-        updateDatabaseFileSaveIndicator();
+        markDatabaseDirty();
         updateDashboard();
         renderInactiveClientsModalList();
     }
@@ -5850,6 +6329,18 @@
             renderClientWizardPanel();
             renderClientModalValidationState();
         }
+    }
+
+    function showModalOnTop(id) {
+        const modal = document.getElementById(id);
+        if (!modal) return;
+        const openModals = Array.from(document.querySelectorAll('.modal-overlay:not(.hidden)'));
+        const topZ = openModals.reduce((max, item) => {
+            const z = parseInt(window.getComputedStyle(item).zIndex, 10);
+            return Number.isFinite(z) ? Math.max(max, z) : max;
+        }, 1000);
+        modal.style.zIndex = String(topZ + 1);
+        modal.classList.remove('hidden');
     }
     window.onclick = function(e) { if(e.target.classList.contains('modal-overlay')) e.target.classList.add('hidden'); }
 

@@ -10,7 +10,8 @@
         clientTaskTouched: 'crm_client_task_touched_v1',
         clientLastContact: 'crm_client_last_contact_v1',
         callSessionLog: 'crm_call_session_log_v1',
-        classMigrationDone: 'crm_client_class_default_migration_v1'
+        classMigrationDone: 'crm_client_class_default_migration_v1',
+        dbLastJsonSaveAt: 'crm_db_last_json_save_at_v1'
     });
 
     function resolveKey(keyOrAlias) {

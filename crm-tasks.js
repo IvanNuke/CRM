@@ -191,7 +191,7 @@
         return applyEvent(workItem, { type: progressEventType, at: now, comment });
     }
 
-    function applyPostpone(workItem, newDueAt, reason = '', now = new Date()) {
+    function applyPostpone(workItem, newDueAt, reason = '', now = new Date(), eventType = 'POSTPONE') {
         const item = ensureWorkItemTempFields(workItem, now);
         const nowIso = getWorkItemEventNowIso(now);
         const oldDueIso = String(item.due_at || buildTaskDueIso(item) || '');
@@ -226,7 +226,7 @@
         if (item.date !== undefined && item.taskStatus !== 'done') item.date = item.nextDate;
         if (item.time !== undefined && item.taskStatus !== 'done') item.time = item.nextTime || '00:00';
 
-        item.events.push(createWorkItemEvent('POSTPONE', nowIso, {
+        item.events.push(createWorkItemEvent(eventType, nowIso, {
             old_due_at: oldDueIso || '',
             new_due_at: item.due_at,
             weight: total,

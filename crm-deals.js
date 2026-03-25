@@ -72,6 +72,7 @@ function ensureDealRecord(rawDeal) {
     const record = {
         id: String(src.id || generateDealId()),
         client_id: String(src.client_id || ''),
+        contact_person_id: String(src.contact_person_id || ''),
         title: String(src.title || '').trim() || 'Сделка без названия',
         amount: Math.max(0, Number(src.amount) || 0),
         category: normalizeDealCategory(src.category),

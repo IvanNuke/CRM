@@ -6,7 +6,7 @@
     <title>Мини-CRM v11</title>
     <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='12' fill='%232c3e50'/%3E%3Cpath d='M20 16c-2 0-4 2-4 4 0 16 12 28 28 28 2 0 4-2 4-4v-6c0-1-1-2-2-3l-7-3c-1-1-3 0-4 1l-3 3c-5-2-8-5-10-10l3-3c1-1 2-3 1-4l-3-7c-1-1-2-2-3-2h-6z' fill='%233498db'/%3E%3C/svg%3E">
     <script src="https://cdn.sheetjs.com/xlsx-latest/package/dist/xlsx.full.min.js"></script>
-        <link rel="stylesheet" href="./crm.css">
+        <link rel="stylesheet" href="./crm.css?v=20260310h">
 </head>
 <body>
 
@@ -124,7 +124,7 @@
                     </div>
                 </div>
                 <div style="font-size:0.75rem; color:#7f8c8d; margin-bottom:8px; padding:0 5px;">
-                    Базовая MVP-сущность сделки с датой следующего касания.
+                    Сделка и связанные задачи: создавайте задачу прямо из сделки.
                 </div>
                 <div style="display:flex; gap:6px; padding:0 5px; margin-bottom:8px;">
                     <div style="flex:1; font-size:0.74rem; color:#6a5a12; background:#fff8de; border:1px solid #f3e0a0; border-radius:6px; padding:5px 6px;">
@@ -139,6 +139,7 @@
                         <option value="today">Сегодня</option>
                         <option value="overdue">Просрочено</option>
                         <option value="week">На неделе</option>
+                        <option value="open">Все кроме закрытых</option>
                         <option value="all">Все</option>
                     </select>
                     <select id="dealCategoryFilter">
@@ -249,7 +250,7 @@
                 <div class="stat-box stat-overdue clickable" data-action="openStatModal" data-kind="overdue"><div class="stat-number" id="statOverdue" style="color:var(--danger)">0</div><div class="stat-label">Просрочено</div></div>
                 <div class="stat-box stat-week clickable" data-action="openStatModal" data-kind="week"><div class="stat-number" id="statWeek" style="color:var(--primary)">0</div><div class="stat-label">7 дней</div></div>
                 <div class="stat-box stat-inactive clickable" data-action="openStatModal" data-kind="inactive"><div class="stat-number" id="statNoTouch" style="color:var(--warning)">0</div><div class="stat-label" id="statNoTouchLabel">Долго без касаний</div></div>
-                <div class="stat-box clickable" data-action="openDealsSidebar"><div class="stat-number" id="statDealsDue" style="color:#7b3fe4">0</div><div class="stat-label">Сделки: касания</div></div>
+                <div class="stat-box clickable" data-action="openDealsSidebar"><div class="stat-number" id="statDealsDue" style="color:#7b3fe4">0</div><div class="stat-label">Сделки: сроки</div></div>
             </div>
             <div id="dashboardDealsQueue" class="dashboard-deals-queue"></div>
             <div class="timeline-wrap">
@@ -314,10 +315,12 @@
 
             <div class="content-tabs">
                 <div class="content-tab active" data-tab="tasks" data-action="switchContentTab">📋 Задачи клиента</div>
+                <div class="content-tab" data-tab="deals" data-action="switchContentTab">🏷️ Сделки</div>
                 <div class="content-tab" data-tab="history" data-action="switchContentTab">🕒 История</div>
             </div>
 
             <div id="tab-tasks-content"><div id="tasksList"></div></div>
+            <div id="tab-deals-content" class="hidden"><div id="clientDealsList"></div></div>
             <div id="tab-history-content" class="hidden"><div id="historyList"></div></div>
         </div>
 
@@ -490,6 +493,11 @@
         </div>
 
         <div style="margin-bottom:10px;">
+            <label>Контактное лицо</label>
+            <div id="tvContactPerson">-</div>
+        </div>
+
+        <div style="margin-bottom:10px;">
             <label>Итог предыдущего контакта</label>
             <div id="tvResult">-</div>
         </div>
@@ -518,6 +526,8 @@
                 <button type="button" class="btn-warning btn-sm" data-action="taskViewPostponeQuick" data-kind="30m">Отложить +30 мин</button>
                 <button type="button" class="btn-warning btn-sm" data-action="taskViewPostponeQuick" data-kind="tomorrow">Отложить на завтра</button>
                 <button type="button" class="btn-warning btn-sm" data-action="taskViewPostponeQuick" data-kind="week">Отложить на неделю</button>
+                <button type="button" class="btn-warning btn-sm" data-action="taskViewOpenNoAnswerReschedule">Не дозвонился</button>
+                <button type="button" class="btn-warning btn-sm" data-action="taskViewOpenReschedule">Перенести на дату</button>
                 <button type="button" class="btn-primary btn-sm" data-action="toggleTaskViewProgressPanel">Сделал шаг</button>
             </div>
             <div id="tvProgressPanel" class="task-progress-panel hidden">
@@ -632,10 +642,12 @@
 <div id="rescheduleTaskModal" class="modal-overlay hidden">
     <div class="modal" style="max-width:420px;">
         <div class="modal-header">
-            <h3 class="modal-title">Перенести срок задачи</h3>
+            <h3 class="modal-title" id="rescheduleTaskModalTitle">Перенести срок задачи</h3>
             <button class="close-modal" data-action="closeModal" data-modal="rescheduleTaskModal">&times;</button>
         </div>
         <input type="hidden" id="rsTaskId">
+        <input type="hidden" id="rsEventType" value="POSTPONE">
+        <input type="hidden" id="rsReason" value="Ручной перенос срока">
         <div class="form-group">
             <label>Дата выполнения</label>
             <input type="date" id="rsDate">
@@ -647,6 +659,81 @@
         <div style="text-align:right;">
             <button class="btn-danger" data-action="closeModal" data-modal="rescheduleTaskModal" style="margin-right:8px;">Отмена</button>
             <button class="btn-success" data-action="saveRescheduledTask">Сохранить</button>
+        </div>
+    </div>
+</div>
+
+<!-- Deal Modal -->
+<div id="dealModal" class="modal-overlay hidden">
+    <div class="modal" style="max-width:560px;">
+        <div class="modal-header">
+            <h3 class="modal-title" id="dealModalTitle">Новая сделка</h3>
+            <button class="close-modal" data-action="closeModal" data-modal="dealModal">&times;</button>
+        </div>
+        <input type="hidden" id="dealFormId">
+        <div class="form-group">
+            <label>Контрагент</label>
+            <input type="text" id="dealClientSearch" list="dealClientOptions" placeholder="Выберите контрагента">
+            <datalist id="dealClientOptions"></datalist>
+            <input type="hidden" id="dealClientId">
+        </div>
+        <div class="form-group">
+            <label>Контактное лицо</label>
+            <select id="dealContactPersonSelect">
+                <option value="">Не выбрано</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Название сделки</label>
+            <input type="text" id="dealTitleInput" placeholder="Например: Поставка на объект">
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr; gap:10px;">
+            <div class="form-group">
+                <label>Сумма, ₽</label>
+                <input type="number" id="dealAmountInput" min="0" step="0.01" placeholder="0">
+            </div>
+            <div class="form-group">
+                <label>Дата следующего касания</label>
+                <input type="date" id="dealNextDateInput">
+            </div>
+        </div>
+        <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:10px;">
+            <div class="form-group">
+                <label>Статус</label>
+                <select id="dealStatusInput">
+                    <option value="active">active</option>
+                    <option value="won">won</option>
+                    <option value="lost">lost</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Стадия</label>
+                <select id="dealStageInput">
+                    <option value="new">Новый</option>
+                    <option value="calc_sent">Расчёт отправлен</option>
+                    <option value="negotiation">Торг</option>
+                    <option value="shipment">Отгрузка</option>
+                    <option value="waiting">Ожидание</option>
+                    <option value="closed">Закрыто</option>
+                </select>
+            </div>
+            <div class="form-group">
+                <label>Категория</label>
+                <select id="dealCategoryInput">
+                    <option value="roof">Кровля</option>
+                    <option value="facade">Фасад</option>
+                    <option value="board">Доска</option>
+                    <option value="other">Прочее</option>
+                </select>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Заметки</label>
+            <textarea id="dealNotesInput" placeholder="Комментарий по сделке" style="min-height:88px;"></textarea>
+        </div>
+        <div style="text-align:right;">
+            <button class="btn-danger" data-action="closeModal" data-modal="dealModal" style="margin-right:8px;">Отмена</button>
+            <button class="btn-success" data-action="saveDealModal">Сохранить</button>
         </div>
     </div>
 </div>
@@ -709,13 +796,13 @@
 
 <div id="toastRoot" class="toast-root"></div>
 
-    <script src="./crm-store.js"></script>
-    <script src="./crm-utils.js"></script>
-    <script src="./crm-normalizers.js"></script>
-    <script src="./crm-tasks.js"></script>
-    <script src="./crm-deals.js"></script>
-    <script src="./crm-import-export.js"></script>
-    <script src="./crm.js"></script>
+    <script src="./crm-store.js?v=20260310g"></script>
+    <script src="./crm-utils.js?v=20260310g"></script>
+    <script src="./crm-normalizers.js?v=20260310g"></script>
+    <script src="./crm-tasks.js?v=20260310g"></script>
+    <script src="./crm-deals.js?v=20260310g"></script>
+    <script src="./crm-import-export.js?v=20260310g"></script>
+    <script src="./crm.js?v=20260310g"></script>
 </body>
 </html>
 
