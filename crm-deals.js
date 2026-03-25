@@ -2,20 +2,44 @@ function generateDealId() {
     return `deal_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
 }
 
+const DEAL_STAGE_LEGACY_MAP = {
+    new: 'Новый',
+    calc_sent: 'Расчёт отправлен',
+    negotiation: 'Торг',
+    shipment: 'Отгрузка',
+    waiting: 'Ожидание',
+    closed: 'Закрыто'
+};
+
+const DEAL_CATEGORY_LEGACY_MAP = {
+    roof: 'Кровля',
+    facade: 'Фасад',
+    board: 'Доска',
+    other: 'Прочее'
+};
+
+function getDefaultDealStageOptions() {
+    return ['Новый', 'Расчёт отправлен', 'Торг', 'Отгрузка', 'Ожидание', 'Закрыто'];
+}
+
+function getDefaultDealCategoryOptions() {
+    return ['Кровля', 'Фасад', 'Доска', 'Прочее'];
+}
+
 function getDealFollowupTemplateDays() {
     return [2, 7, 21, 60];
 }
 
 function normalizeDealCategory(value) {
-    const raw = String(value || '').trim().toLowerCase();
-    if (['roof', 'facade', 'board', 'other'].includes(raw)) return raw;
-    return 'other';
+    const raw = String(value || '').trim();
+    if (!raw) return 'Прочее';
+    return DEAL_CATEGORY_LEGACY_MAP[raw.toLowerCase()] || raw;
 }
 
 function normalizeDealStage(value) {
-    const raw = String(value || '').trim().toLowerCase();
-    if (['new', 'calc_sent', 'negotiation', 'shipment', 'waiting', 'closed'].includes(raw)) return raw;
-    return 'new';
+    const raw = String(value || '').trim();
+    if (!raw) return 'Новый';
+    return DEAL_STAGE_LEGACY_MAP[raw.toLowerCase()] || raw;
 }
 
 function normalizeDealStatus(value) {
@@ -68,7 +92,7 @@ function ensureDealRecord(rawDeal) {
     const src = rawDeal && typeof rawDeal === 'object' ? rawDeal : {};
     const nowIso = new Date().toISOString();
     const status = normalizeDealStatus(src.status);
-    const stage = status === 'active' ? normalizeDealStage(src.stage) : 'closed';
+    const stage = status === 'active' ? normalizeDealStage(src.stage) : 'Закрыто';
     const record = {
         id: String(src.id || generateDealId()),
         client_id: String(src.client_id || ''),
@@ -93,10 +117,10 @@ function ensureDealRecord(rawDeal) {
 }
 
 function buildDealFromTask(task, client, options = {}) {
-    const stage = normalizeDealStage(options.stage || 'calc_sent');
+    const stage = normalizeDealStage(options.stage || 'Расчёт отправлен');
     const status = normalizeDealStatus(options.status || 'active');
     const nowIso = new Date().toISOString();
-    const nextTouch = stage === 'calc_sent' ? addDaysToIso(nowIso, 2) : addDaysToIso(nowIso, 7);
+    const nextTouch = stage === 'Расчёт отправлен' ? addDaysToIso(nowIso, 2) : addDaysToIso(nowIso, 7);
     const fallbackTitle = String(task?.nextStep || task?.desc || '').trim();
     const record = ensureDealRecord({
         id: generateDealId(),

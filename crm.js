@@ -38,6 +38,8 @@
     let clientLastContactAt = {};
     let callSessionLog = {};
     let clientTypeOptions = ['Не указан', 'Монтажник', 'Перекуп', 'Частник', 'Для собственных нужд'];
+    let dealStageOptions = getDefaultDealStageOptions();
+    let dealCategoryOptions = getDefaultDealCategoryOptions();
     let dbFileHandle = null;
     let dbDirty = false;
     let dbLastFileSaveAt = 0;
@@ -67,6 +69,8 @@
         const storedTouches = CRMStore.get('touches');
         const storedInactiveFilter = CRMStore.get('inactiveFilter');
         const storedClientTypeOptions = CRMStore.get('clientTypeOptions');
+        const storedDealStageOptions = CRMStore.get('dealStageOptions');
+        const storedDealCategoryOptions = CRMStore.get('dealCategoryOptions');
         const storedClientSort = CRMStore.get('clientSort');
         const storedClientTaskTouched = CRMStore.get('clientTaskTouched');
         const storedClientLastContact = CRMStore.get('clientLastContact');
@@ -143,6 +147,18 @@
                 }
             } catch(e) {}
         }
+        if (storedDealStageOptions) {
+            try {
+                const parsed = JSON.parse(storedDealStageOptions);
+                dealStageOptions = normalizeDealOptionList(parsed, getDefaultDealStageOptions(), ['Закрыто']);
+            } catch(e) {}
+        }
+        if (storedDealCategoryOptions) {
+            try {
+                const parsed = JSON.parse(storedDealCategoryOptions);
+                dealCategoryOptions = normalizeDealOptionList(parsed, getDefaultDealCategoryOptions(), ['Прочее']);
+            } catch(e) {}
+        }
         if (storedDbLastJsonSaveAt) {
             const ts = parseInt(storedDbLastJsonSaveAt, 10);
             if (Number.isFinite(ts) && ts > 0) dbLastFileSaveAt = ts;
@@ -169,6 +185,10 @@
             c.relatedClientIds = normalizeRelatedClientIds(c.relatedClientIds);
             ensureClientTypesInOptions(c.type);
         });
+        deals.forEach((d) => {
+            ensureDealStageInOptions(d.stage, false);
+            ensureDealCategoryInOptions(d.category, false);
+        });
         history.forEach(h => {
             refreshWorkItemTempState(h);
             h.modifiedAt = getHistoryRecordActivityTs(h);
@@ -178,6 +198,7 @@
         pruneCallSessionLog();
         CRMStore.set('classMigrationDone', '1');
         renderClientTypeOptions();
+        renderAllDealOptionControls();
         bindClientModalValidationLive();
         const sortSelect = document.getElementById('clientSort');
         if (sortSelect) sortSelect.value = currentClientSort;
@@ -367,7 +388,8 @@
             deleteDeal: (el) => deleteDeal(String(el.dataset.dealId || '')),
             dealDialPhone: (el) => dealDialPhone(String(el.dataset.phone || '')),
             dealWhatsApp: (el) => dealWhatsApp(String(el.dataset.phone || '')),
-            dealTelegram: (el) => dealTelegram(String(el.dataset.phone || ''))
+            dealTelegram: (el) => dealTelegram(String(el.dataset.phone || '')),
+            manageDealOption: (el) => manageDealOption(String(el.dataset.kind || ''), String(el.dataset.mode || ''), String(el.dataset.target || ''))
         };
 
         document.addEventListener('click', (e) => {
@@ -424,6 +446,7 @@
         }
         const dealCategoryFilter = document.getElementById('dealCategoryFilter');
         if (dealCategoryFilter) {
+            renderDealCategoryFilterOptions();
             dealCategoryFilter.value = currentDealCategoryFilter;
             dealCategoryFilter.addEventListener('change', () => {
                 currentDealCategoryFilter = String(dealCategoryFilter.value || 'all');
@@ -432,6 +455,7 @@
         }
         const dealStageFilter = document.getElementById('dealStageFilter');
         if (dealStageFilter) {
+            renderDealStageFilterOptions();
             dealStageFilter.value = currentDealStageFilter;
             dealStageFilter.addEventListener('change', () => {
                 currentDealStageFilter = String(dealStageFilter.value || 'all');
@@ -513,6 +537,8 @@
         CRMStore.setJSON('touches', touches);
         CRMStore.setJSON('inactiveFilter', { count: inactiveFilterCount, unit: inactiveFilterUnit });
         CRMStore.setJSON('clientTypeOptions', clientTypeOptions);
+        CRMStore.setJSON('dealStageOptions', dealStageOptions);
+        CRMStore.setJSON('dealCategoryOptions', dealCategoryOptions);
         if (includeSort) {
             CRMStore.set('clientSort', currentClientSort);
         }
@@ -2175,6 +2201,165 @@
         return select ? select.value : '';
     }
 
+    function normalizeDealOptionList(list, fallback, required = []) {
+        const source = Array.isArray(list) ? list : fallback;
+        const normalized = [];
+        source.forEach((item) => {
+            const value = String(item || '').trim();
+            if (!value) return;
+            if (!normalized.some(existing => existing.toLowerCase() === value.toLowerCase())) normalized.push(value);
+        });
+        required.forEach((item) => {
+            const value = String(item || '').trim();
+            if (!value) return;
+            if (!normalized.some(existing => existing.toLowerCase() === value.toLowerCase())) normalized.push(value);
+        });
+        return normalized.length ? normalized : [...fallback];
+    }
+
+    function syncDealFilterStateAfterOptionsChange() {
+        if (currentDealStageFilter !== 'all' && !dealStageOptions.includes(currentDealStageFilter)) currentDealStageFilter = 'all';
+        if (currentDealCategoryFilter !== 'all' && !dealCategoryOptions.includes(currentDealCategoryFilter)) currentDealCategoryFilter = 'all';
+    }
+
+    function renderSelectOptions(select, options, selectedValue = '', prefixOptions = []) {
+        if (!select) return;
+        const previous = String(selectedValue || select.value || '');
+        select.replaceChildren();
+        prefixOptions.forEach((item) => {
+            const opt = document.createElement('option');
+            opt.value = String(item.value || '');
+            opt.textContent = String(item.label || item.value || '');
+            select.appendChild(opt);
+        });
+        options.forEach((value) => {
+            const opt = document.createElement('option');
+            opt.value = String(value);
+            opt.textContent = String(value);
+            select.appendChild(opt);
+        });
+        if (previous && Array.from(select.options).some(opt => opt.value === previous)) {
+            select.value = previous;
+        } else if (prefixOptions.length) {
+            select.value = String(prefixOptions[0].value || '');
+        } else if (options.length) {
+            select.value = String(options[0]);
+        }
+    }
+
+    function renderDealStageInputOptions(selectedValue = '') {
+        renderSelectOptions(document.getElementById('dealStageInput'), dealStageOptions, normalizeDealStage(selectedValue || document.getElementById('dealStageInput')?.value || 'Новый'));
+    }
+
+    function renderDealCategoryInputOptions(selectedValue = '') {
+        renderSelectOptions(document.getElementById('dealCategoryInput'), dealCategoryOptions, normalizeDealCategory(selectedValue || document.getElementById('dealCategoryInput')?.value || 'Прочее'));
+    }
+
+    function renderDealStageFilterOptions(selectedValue = '') {
+        renderSelectOptions(document.getElementById('dealStageFilter'), dealStageOptions, selectedValue || currentDealStageFilter, [{ value: 'all', label: 'Стадия: все' }]);
+    }
+
+    function renderDealCategoryFilterOptions(selectedValue = '') {
+        renderSelectOptions(document.getElementById('dealCategoryFilter'), dealCategoryOptions, selectedValue || currentDealCategoryFilter, [{ value: 'all', label: 'Категория: все' }]);
+    }
+
+    function renderDealDetailStageOptions(selectedValue = '') {
+        renderSelectOptions(document.getElementById('dealDetailStageInput'), dealStageOptions, normalizeDealStage(selectedValue || document.getElementById('dealDetailStageInput')?.value || 'Новый'));
+    }
+
+    function renderDealDetailCategoryOptions(selectedValue = '') {
+        renderSelectOptions(document.getElementById('dealDetailCategoryInput'), dealCategoryOptions, normalizeDealCategory(selectedValue || document.getElementById('dealDetailCategoryInput')?.value || 'Прочее'));
+    }
+
+    function renderAllDealOptionControls() {
+        syncDealFilterStateAfterOptionsChange();
+        renderDealStageInputOptions();
+        renderDealCategoryInputOptions();
+        renderDealStageFilterOptions();
+        renderDealCategoryFilterOptions();
+        renderDealDetailStageOptions();
+        renderDealDetailCategoryOptions();
+    }
+
+    function ensureDealStageInOptions(value, rerender = true) {
+        const normalized = normalizeDealStage(value);
+        if (!normalized) return false;
+        if (dealStageOptions.some(item => item.toLowerCase() === normalized.toLowerCase())) return false;
+        dealStageOptions.push(normalized);
+        if (rerender) renderAllDealOptionControls();
+        return true;
+    }
+
+    function ensureDealCategoryInOptions(value, rerender = true) {
+        const normalized = normalizeDealCategory(value);
+        if (!normalized) return false;
+        if (dealCategoryOptions.some(item => item.toLowerCase() === normalized.toLowerCase())) return false;
+        dealCategoryOptions.push(normalized);
+        if (rerender) renderAllDealOptionControls();
+        return true;
+    }
+
+    function getDealOptionUsageCount(kind, value) {
+        const normalized = String(value || '').trim().toLowerCase();
+        if (!normalized) return 0;
+        return deals.filter((deal) => {
+            const current = kind === 'stage' ? normalizeDealStage(deal?.stage) : normalizeDealCategory(deal?.category);
+            return String(current || '').trim().toLowerCase() === normalized;
+        }).length;
+    }
+
+    function addDealOption(kind, value) {
+        const changed = kind === 'stage'
+            ? ensureDealStageInOptions(value, false)
+            : ensureDealCategoryInOptions(value, false);
+        if (!changed) return false;
+        renderAllDealOptionControls();
+        saveData();
+        return true;
+    }
+
+    function removeDealOption(kind, value) {
+        const normalized = kind === 'stage' ? normalizeDealStage(value) : normalizeDealCategory(value);
+        const protectedValues = kind === 'stage' ? ['Закрыто'] : ['Прочее'];
+        if (protectedValues.includes(normalized)) {
+            showToast('Этот вариант нельзя удалить', 'warn');
+            return false;
+        }
+        const usageCount = getDealOptionUsageCount(kind, normalized);
+        if (usageCount > 0) {
+            showToast(`Нельзя удалить: используется в ${usageCount} сделк.`, 'warn');
+            return false;
+        }
+        const targetList = kind === 'stage' ? dealStageOptions : dealCategoryOptions;
+        const idx = targetList.findIndex(item => item.toLowerCase() === normalized.toLowerCase());
+        if (idx < 0) return false;
+        targetList.splice(idx, 1);
+        renderAllDealOptionControls();
+        saveData();
+        return true;
+    }
+
+    function manageDealOption(kind, mode, targetId) {
+        const safeKind = kind === 'category' ? 'category' : 'stage';
+        const safeMode = mode === 'remove' ? 'remove' : 'add';
+        const select = document.getElementById(targetId);
+        const label = safeKind === 'stage' ? 'стадию сделки' : 'тип материала';
+        if (safeMode === 'add') {
+            const rawValue = prompt(`Добавить ${label}:`, '');
+            if (rawValue === null) return;
+            const ok = addDealOption(safeKind, rawValue);
+            if (!ok) return showToast('Такой вариант уже есть или поле пустое', 'warn');
+            const nextValue = safeKind === 'stage' ? normalizeDealStage(rawValue) : normalizeDealCategory(rawValue);
+            const refreshedSelect = document.getElementById(targetId);
+            if (refreshedSelect) refreshedSelect.value = nextValue;
+            return showToast('Вариант добавлен', 'success');
+        }
+        const selectedValue = String(select?.value || '').trim();
+        if (!selectedValue) return showToast('Сначала выберите вариант', 'warn');
+        if (!confirm(`Удалить вариант "${selectedValue}" из списка?`)) return;
+        if (removeDealOption(safeKind, selectedValue)) showToast('Вариант удалён', 'success');
+    }
+
     function persistStateToLocalStorage() {
         writeStateToLocalStorage();
         updateDatabaseFileSaveIndicator();
@@ -2375,7 +2560,7 @@
     function isDealClosed(deal) {
         const status = normalizeDealStatus(deal?.status);
         const stage = normalizeDealStage(deal?.stage);
-        return status === 'won' || status === 'lost' || stage === 'closed';
+        return status === 'won' || status === 'lost' || stage === 'Закрыто';
     }
 
     function getTasksLinkedToDeal(deal) {
@@ -2508,6 +2693,8 @@
         if (!titleEl || !idInput || !clientSearch || !clientIdInput || !titleInput || !amountInput || !nextDateInput || !statusInput || !stageInput || !categoryInput || !notesInput) return;
 
         renderDealClientOptions();
+        renderDealStageInputOptions(deal ? deal.stage : 'Новый');
+        renderDealCategoryInputOptions(deal ? deal.category : 'Прочее');
         const prefillClient = deal
             ? clients.find(c => String(c.id) === String(deal.client_id || '')) || null
             : (currentClientId ? clients.find(c => String(c.id) === String(currentClientId)) || null : null);
@@ -2519,8 +2706,8 @@
         amountInput.value = deal && Number(deal.amount || 0) > 0 ? String(deal.amount) : '';
         nextDateInput.value = deal ? getDateOnlyFromIso(deal.next_touch_at) : getDateOnlyFromIso(addDaysToIso(new Date().toISOString(), 2));
         statusInput.value = deal ? String(deal.status || 'active') : 'active';
-        stageInput.value = deal ? String(deal.stage || 'new') : 'new';
-        categoryInput.value = deal ? String(deal.category || 'other') : 'other';
+        stageInput.value = deal ? normalizeDealStage(deal.stage || 'Новый') : 'Новый';
+        categoryInput.value = deal ? normalizeDealCategory(deal.category || 'Прочее') : 'Прочее';
         notesInput.value = deal ? String(deal.notes || '') : '';
         populateDealContactPersonSelect(clientIdInput.value, deal ? String(deal.contact_person_id || '') : '');
         modal.classList.remove('hidden');
@@ -2533,8 +2720,8 @@
         const amountRaw = String(document.getElementById('dealAmountInput')?.value || '').trim().replace(',', '.');
         const nextDateRaw = String(document.getElementById('dealNextDateInput')?.value || '').trim();
         const status = String(document.getElementById('dealStatusInput')?.value || 'active');
-        const stage = String(document.getElementById('dealStageInput')?.value || 'new');
-        const category = String(document.getElementById('dealCategoryInput')?.value || 'other');
+        const stage = normalizeDealStage(String(document.getElementById('dealStageInput')?.value || 'Новый'));
+        const category = normalizeDealCategory(String(document.getElementById('dealCategoryInput')?.value || 'Прочее'));
         const notes = String(document.getElementById('dealNotesInput')?.value || '').trim();
         const contactPersonId = String(document.getElementById('dealContactPersonSelect')?.value || '').trim();
         if (!title) return showToast('Название сделки обязательно', 'warn');
@@ -2551,7 +2738,7 @@
                 title,
                 amount,
                 status,
-                stage: status === 'active' ? stage : 'closed',
+                stage: status === 'active' ? stage : 'Закрыто',
                 category,
                 next_touch_at: status === 'active' ? nextTouchAt : '',
                 notes
@@ -2565,7 +2752,7 @@
                 title,
                 amount,
                 category,
-                stage: status === 'active' ? stage : 'closed',
+                stage: status === 'active' ? stage : 'Закрыто',
                 status,
                 created_at: new Date().toISOString(),
                 next_touch_at: status === 'active' ? nextTouchAt : '',
@@ -2877,14 +3064,14 @@
         const amount = Math.max(0, Number(amountRaw) || 0);
         const status = String(document.getElementById('dealDetailStatusInput')?.value || deal.status || 'active');
         const nextDateRaw = String(document.getElementById('dealDetailNextDateInput')?.value || '').trim();
-        const stage = String(document.getElementById('dealDetailStageInput')?.value || deal.stage || 'new');
-        const category = String(document.getElementById('dealDetailCategoryInput')?.value || deal.category || 'other');
+        const stage = normalizeDealStage(String(document.getElementById('dealDetailStageInput')?.value || deal.stage || 'Новый'));
+        const category = normalizeDealCategory(String(document.getElementById('dealDetailCategoryInput')?.value || deal.category || 'Прочее'));
         const notes = String(document.getElementById('dealDetailNotesInput')?.value || '');
         const nextTouchAt = /^\d{4}-\d{2}-\d{2}$/.test(nextDateRaw) ? new Date(`${nextDateRaw}T10:00:00`).toISOString() : '';
         const idx = deals.findIndex(d => String(d.id) === String(deal.id));
         if (idx < 0) return;
         const normalizedStatus = ['active', 'won', 'lost'].includes(status) ? status : 'active';
-        const normalizedStage = normalizedStatus === 'active' ? stage : 'closed';
+        const normalizedStage = normalizedStatus === 'active' ? stage : 'Закрыто';
         deals[idx] = ensureDealRecord({
             ...deal,
             title: title || deal.title || 'Сделка без названия',
@@ -3035,7 +3222,7 @@
 
         const deal = buildDealFromTask(task, client, {
             title: safeTitle,
-            stage: 'calc_sent'
+            stage: 'Расчёт отправлен'
         });
         deal.contact_person_id = String(task.contactPersonId || '');
         deals.unshift(deal);
@@ -3070,7 +3257,7 @@
         const meta = document.createElement('div');
         meta.className = 'deal-details-meta';
         const amountText = Number(deal.amount || 0) > 0 ? ` · сумма ${Number(deal.amount).toLocaleString('ru-RU')} ₽` : '';
-        meta.textContent = `${client ? client.name : 'Без клиента'} · ${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}${amountText} · срок ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
+        meta.textContent = `${client ? client.name : 'Без клиента'} · ${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}${amountText} · срок ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
 
         const contactMeta = document.createElement('div');
         contactMeta.className = 'deal-details-meta';
@@ -3099,20 +3286,16 @@
                 <option value="lost">lost</option>
             </select>
             <input id="dealDetailNextDateInput" type="date">
-            <select id="dealDetailStageInput">
-                <option value="new">Новый</option>
-                <option value="calc_sent">Расчёт отправлен</option>
-                <option value="negotiation">Торг</option>
-                <option value="shipment">Отгрузка</option>
-                <option value="waiting">Ожидание</option>
-                <option value="closed">Закрыто</option>
-            </select>
-            <select id="dealDetailCategoryInput">
-                <option value="roof">Кровля</option>
-                <option value="facade">Фасад</option>
-                <option value="board">Доска</option>
-                <option value="other">Прочее</option>
-            </select>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <select id="dealDetailStageInput" style="flex:1 1 auto;"></select>
+                <button type="button" class="btn-primary btn-sm" data-action="manageDealOption" data-kind="stage" data-mode="add" data-target="dealDetailStageInput">+</button>
+                <button type="button" class="btn-danger btn-sm" data-action="manageDealOption" data-kind="stage" data-mode="remove" data-target="dealDetailStageInput">−</button>
+            </div>
+            <div style="display:flex; gap:6px; align-items:center;">
+                <select id="dealDetailCategoryInput" style="flex:1 1 auto;"></select>
+                <button type="button" class="btn-primary btn-sm" data-action="manageDealOption" data-kind="category" data-mode="add" data-target="dealDetailCategoryInput">+</button>
+                <button type="button" class="btn-danger btn-sm" data-action="manageDealOption" data-kind="category" data-mode="remove" data-target="dealDetailCategoryInput">−</button>
+            </div>
             <textarea id="dealDetailNotesInput" placeholder="Заметки по сделке" style="grid-column:1 / span 2; min-height:64px;"></textarea>
             <button type="button" class="btn-primary btn-sm" data-deal-detail-action="save-meta" data-deal-id="${escapeHtml(String(deal.id))}" style="grid-column:1 / span 2;">Сохранить параметры сделки</button>
         `;
@@ -3159,12 +3342,14 @@
         const nextDateInput = document.getElementById('dealDetailNextDateInput');
         const categoryInput = document.getElementById('dealDetailCategoryInput');
         const notesInput = document.getElementById('dealDetailNotesInput');
+        renderDealDetailStageOptions(deal.stage || 'Новый');
+        renderDealDetailCategoryOptions(deal.category || 'Прочее');
         if (titleInput) titleInput.value = String(deal.title || '');
         if (amountInput) amountInput.value = Number(deal.amount || 0) > 0 ? String(deal.amount) : '';
         if (statusInput) statusInput.value = String(deal.status || 'active');
         if (nextDateInput) nextDateInput.value = getDateOnlyFromIso(deal.next_touch_at);
-        if (stageInput) stageInput.value = String(deal.stage || 'new');
-        if (categoryInput) categoryInput.value = String(deal.category || 'other');
+        if (stageInput) stageInput.value = normalizeDealStage(deal.stage || 'Новый');
+        if (categoryInput) categoryInput.value = normalizeDealCategory(deal.category || 'Прочее');
         if (notesInput) notesInput.value = String(deal.notes || '');
     }
 
@@ -3294,7 +3479,7 @@
             const head = document.createElement('div');
             head.className = 'deal-item-head';
             const left = document.createElement('span');
-            left.textContent = `${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}`;
+            left.textContent = `${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}`;
             const right = document.createElement('span');
             right.textContent = `Срок: ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
             head.appendChild(left);
@@ -5366,7 +5551,7 @@
 
             const head = document.createElement('div');
             head.className = 'deal-item-head';
-            head.innerHTML = `<span>${escapeHtml(`${getDealStageLabel(deal.stage)} · ${getDealHeatLabel(deal.heat)}`)}</span><span>Срок: ${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}</span>`;
+            head.innerHTML = `<span>${escapeHtml(`${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}`)}</span><span>Срок: ${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}</span>`;
 
             const title = document.createElement('div');
             title.className = 'deal-item-title';

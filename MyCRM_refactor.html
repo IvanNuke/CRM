@@ -712,23 +712,19 @@
             </div>
             <div class="form-group">
                 <label>Стадия</label>
-                <select id="dealStageInput">
-                    <option value="new">Новый</option>
-                    <option value="calc_sent">Расчёт отправлен</option>
-                    <option value="negotiation">Торг</option>
-                    <option value="shipment">Отгрузка</option>
-                    <option value="waiting">Ожидание</option>
-                    <option value="closed">Закрыто</option>
-                </select>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <select id="dealStageInput" style="flex:1 1 auto;"></select>
+                    <button type="button" class="btn-primary btn-sm" data-action="manageDealOption" data-kind="stage" data-mode="add" data-target="dealStageInput">+</button>
+                    <button type="button" class="btn-danger btn-sm" data-action="manageDealOption" data-kind="stage" data-mode="remove" data-target="dealStageInput">−</button>
+                </div>
             </div>
             <div class="form-group">
                 <label>Категория</label>
-                <select id="dealCategoryInput">
-                    <option value="roof">Кровля</option>
-                    <option value="facade">Фасад</option>
-                    <option value="board">Доска</option>
-                    <option value="other">Прочее</option>
-                </select>
+                <div style="display:flex; gap:6px; align-items:center;">
+                    <select id="dealCategoryInput" style="flex:1 1 auto;"></select>
+                    <button type="button" class="btn-primary btn-sm" data-action="manageDealOption" data-kind="category" data-mode="add" data-target="dealCategoryInput">+</button>
+                    <button type="button" class="btn-danger btn-sm" data-action="manageDealOption" data-kind="category" data-mode="remove" data-target="dealCategoryInput">−</button>
+                </div>
             </div>
         </div>
         <div class="form-group">
