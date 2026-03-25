@@ -134,7 +134,7 @@
                         Просрочено: <strong id="dealOverdueCount">0</strong>
                     </div>
                 </div>
-                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr; gap:6px; margin:8px 0 6px;">
+                <div style="display:grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap:6px; margin:8px 0 6px;">
                     <select id="dealTimingFilter">
                         <option value="today">Сегодня</option>
                         <option value="overdue">Просрочено</option>
@@ -157,6 +157,10 @@
                         <option value="shipment">Отгрузка</option>
                         <option value="waiting">Ожидание</option>
                         <option value="closed">Закрыто</option>
+                    </select>
+                    <select id="dealSortFilter">
+                        <option value="amount_desc">Сумма: больше -> меньше</option>
+                        <option value="next_touch_asc">Срок: ближе сначала</option>
                     </select>
                 </div>
             </div>

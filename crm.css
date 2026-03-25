@@ -212,7 +212,18 @@
             background: #fff;
             cursor: pointer;
         }
+        .deal-item.overdue {
+            border-color:#f3c4be;
+            border-left-color:#e74c3c;
+            background:#fff5f3;
+        }
+        .deal-item.overdue:hover { background:#ffefec; }
         .deal-item.active { border-color:#d7c6ff; background:#f8f4ff; }
+        .deal-item.active.overdue {
+            border-color:#efb3ab;
+            border-left-color:#e74c3c;
+            background:#fff0ed;
+        }
         .deal-item:hover { background: #fbf8ff; }
         .deal-item-head { display:flex; justify-content:space-between; gap:8px; font-size:0.8rem; color:#5f6f83; }
         .deal-item-client { font-size:0.95rem; font-weight:800; color:#0f172a; margin:4px 0 1px; line-height:1.25; }
@@ -262,16 +273,29 @@
         }
         .deal-linked-task-row {
             display:flex;
-            justify-content:space-between;
             gap:8px;
             font-size:0.76rem;
             margin-bottom:4px;
-        }
-        .deal-linked-task-row.done {
-            background:#eefbf2;
             border:1px solid #cdecd6;
             border-radius:6px;
-            padding:5px 6px;
+            padding:7px 9px;
+            background:#eefbf2;
+            color:#1f6f43;
+            cursor:pointer;
+            transition:background .15s ease, border-color .15s ease;
+        }
+        .deal-linked-task-row:hover {
+            background:#e2f6e8;
+            border-color:#b8dfc3;
+        }
+        .deal-linked-task-row.done {
+            background:#f3f4f6;
+            border-color:#d5d9df;
+            color:#5f6b78;
+        }
+        .deal-linked-task-row.done:hover {
+            background:#e9edf1;
+            border-color:#c8cfd8;
         }
         .deal-details-panel {
             margin-top: 6px;

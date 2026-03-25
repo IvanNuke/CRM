@@ -19,9 +19,10 @@
     let currentGlobalTaskStatusFilter = 'all';
     let currentGlobalTaskDateFilter = '';
     let currentGlobalTaskSort = 'due';
-    let currentDealTimingFilter = 'week';
+    let currentDealTimingFilter = 'open';
     let currentDealCategoryFilter = 'all';
     let currentDealStageFilter = 'all';
+    let currentDealSort = 'amount_desc';
     let currentDealId = '';
     let currentClientSort = 'alpha';
     let currentContentTab = 'tasks';
@@ -417,7 +418,7 @@
         if (dealTimingFilter) {
             dealTimingFilter.value = currentDealTimingFilter;
             dealTimingFilter.addEventListener('change', () => {
-                currentDealTimingFilter = String(dealTimingFilter.value || 'today');
+                currentDealTimingFilter = String(dealTimingFilter.value || 'open');
                 renderDealsSidebar();
             });
         }
@@ -434,6 +435,14 @@
             dealStageFilter.value = currentDealStageFilter;
             dealStageFilter.addEventListener('change', () => {
                 currentDealStageFilter = String(dealStageFilter.value || 'all');
+                renderDealsSidebar();
+            });
+        }
+        const dealSortFilter = document.getElementById('dealSortFilter');
+        if (dealSortFilter) {
+            dealSortFilter.value = currentDealSort;
+            dealSortFilter.addEventListener('change', () => {
+                currentDealSort = String(dealSortFilter.value || 'amount_desc');
                 renderDealsSidebar();
             });
         }
@@ -2413,7 +2422,7 @@
     function openDealByIdInSidebar(dealId) {
         const safeDealId = String(dealId || '').trim();
         if (!safeDealId) return;
-        currentDealTimingFilter = 'all';
+        currentDealTimingFilter = 'open';
         currentDealCategoryFilter = 'all';
         currentDealStageFilter = 'all';
         currentDealId = safeDealId;
@@ -2929,7 +2938,7 @@
         if (!targetId) return;
         const exists = deals.some(d => String(d.id) === targetId);
         if (!exists) return;
-        currentDealTimingFilter = 'all';
+        currentDealTimingFilter = 'open';
         currentDealCategoryFilter = 'all';
         currentDealStageFilter = 'all';
         currentDealId = targetId;
@@ -3129,14 +3138,16 @@
             tasksWrap.appendChild(tasksTitle);
             linkedTasks.forEach((t) => {
                 const row = document.createElement('div');
-                row.style.cssText = 'display:flex; justify-content:space-between; gap:8px; font-size:0.76rem; margin-bottom:4px;';
+                row.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.76rem; margin-bottom:4px;';
                 const taskText = String(t.nextStep || t.desc || 'Задача');
                 const doneResult = String(t.result || '').trim();
                 const suffix = t.taskStatus === 'done'
                     ? (doneResult ? ` · Итог: ${doneResult}` : ' · Выполнена')
                     : '';
                 row.className = t.taskStatus === 'done' ? 'deal-linked-task-row done' : 'deal-linked-task-row';
-                row.innerHTML = `<span>${escapeHtml(`${taskText}${suffix}`)}</span><button type="button" class="btn-sm btn-primary" data-action="dealOpenTask" data-task-id="${escapeHtml(String(t.id || ''))}">Открыть</button>`;
+                row.dataset.action = 'dealOpenTask';
+                row.dataset.taskId = String(t.id || '');
+                row.innerHTML = `<span>${escapeHtml(`${taskText}${suffix}`)}</span>`;
                 tasksWrap.appendChild(row);
             });
             panel.appendChild(tasksWrap);
@@ -3226,15 +3237,16 @@
         const timingSelect = document.getElementById('dealTimingFilter');
         const categorySelect = document.getElementById('dealCategoryFilter');
         const stageSelect = document.getElementById('dealStageFilter');
+        const sortSelect = document.getElementById('dealSortFilter');
         if (timingSelect && timingSelect.value !== currentDealTimingFilter) timingSelect.value = currentDealTimingFilter;
         if (categorySelect && categorySelect.value !== currentDealCategoryFilter) categorySelect.value = currentDealCategoryFilter;
         if (stageSelect && stageSelect.value !== currentDealStageFilter) stageSelect.value = currentDealStageFilter;
+        if (sortSelect && sortSelect.value !== currentDealSort) sortSelect.value = currentDealSort;
         ensureDealsDelegation();
         renderDealReminderSummary();
 
         let activeDeals = (Array.isArray(deals) ? deals : [])
-            .map(d => ensureDealRecord(d))
-            .sort((a, b) => String(a.next_touch_at || '').localeCompare(String(b.next_touch_at || '')));
+            .map(d => ensureDealRecord(d));
         activeDeals = activeDeals.filter((d) => {
             if (currentDealCategoryFilter !== 'all' && String(d.category) !== String(currentDealCategoryFilter)) return false;
             if (currentDealStageFilter !== 'all' && String(d.stage) !== String(currentDealStageFilter)) return false;
@@ -3242,6 +3254,13 @@
             if (currentDealTimingFilter === 'all') return true;
             if (currentDealTimingFilter === 'open') return !isDealClosed(d);
             return bucket === currentDealTimingFilter;
+        });
+        activeDeals.sort((a, b) => {
+            if (currentDealSort === 'amount_desc') {
+                const amountDiff = Number(b.amount || 0) - Number(a.amount || 0);
+                if (amountDiff !== 0) return amountDiff;
+            }
+            return String(a.next_touch_at || '').localeCompare(String(b.next_touch_at || ''));
         });
 
         badge.textContent = String(activeDeals.length);
@@ -3266,7 +3285,9 @@
             const client = clients.find(c => String(c.id) === String(deal.client_id));
             const overdueLive = calcDealOverdueDays(deal);
             const item = document.createElement('div');
-            item.className = `deal-item ${String(deal.id) === String(currentDealId) ? 'active' : ''}`;
+            const isActiveDeal = String(deal.id) === String(currentDealId);
+            const isOverdueDeal = getDealTimeBucket(deal) === 'overdue';
+            item.className = `deal-item${isActiveDeal ? ' active' : ''}${isOverdueDeal ? ' overdue' : ''}`;
             item.dataset.dealId = String(deal.id || '');
             item.title = deal.notes || '';
 
