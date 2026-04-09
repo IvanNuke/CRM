@@ -190,6 +190,7 @@
             ensureDealCategoryInOptions(d.category, false);
         });
         history.forEach(h => {
+            ensureTaskCreatedAt(h);
             refreshWorkItemTempState(h);
             h.modifiedAt = getHistoryRecordActivityTs(h);
             touchClientTaskActivity(h.clientId, h.modifiedAt);
@@ -382,6 +383,7 @@
             taskViewPostponeQuick: (el) => taskViewPostponeQuick(String(el.dataset.kind || '')),
             taskViewAddProgressEvent: (el) => taskViewAddProgressEvent(String(el.dataset.progressType || '')),
             openDealFromDashboard: (el) => openDealFromDashboard(String(el.dataset.dealId || '')),
+            setDealTimingFilter: (el) => setDealTimingFilter(String(el.dataset.dealTimingFilter || '')),
             dealOpenClient: (el) => dealOpenClient(String(el.dataset.clientId || '')),
             dealOpenTask: (el) => dealOpenTask(String(el.dataset.taskId || '')),
             openDealModal: (el) => openDealModal(String(el.dataset.dealId || '')),
@@ -745,6 +747,7 @@
                     const client = clients.find(c => String(c.id) === String(t.clientId));
                     const contactPerson = getTaskContactPersonLabel(t, client);
                     const workflow = getTaskWorkflowStatusMeta(t);
+                    const createdLabel = getTaskCreatedDateLabel(t);
                     const card = document.createElement('div');
                     const state = getTaskTimeState(t);
                     card.className = `timeline-task ${state === 'overdue' ? 'overdue' : (state === 'today' ? 'today' : 'future')}`;
@@ -785,12 +788,14 @@
                     const tooltipStatus = buildTooltipLine('Статус', `${workflow.icon} ${workflow.label}`);
                     const tooltipType = buildTooltipLine('Тип', t.type || '-');
                     const tooltipTask = buildTooltipLine('Задача', t.nextStep || '-');
+                    const tooltipCreated = buildTooltipLine('Создана', createdLabel.replace(/^Создана\s+/, '') || '-');
                     const tooltipContact = buildTooltipLine('Контакт', contactPerson || '-');
                     const tooltipPrev = buildTooltipLine('Итог прошлого', getPreviousContactResult(t) || '-');
                     tooltip.appendChild(tooltipDate);
                     tooltip.appendChild(tooltipStatus);
                     tooltip.appendChild(tooltipType);
                     tooltip.appendChild(tooltipTask);
+                    tooltip.appendChild(tooltipCreated);
                     tooltip.appendChild(tooltipContact);
                     tooltip.appendChild(tooltipPrev);
                     card.appendChild(head);
@@ -1284,6 +1289,48 @@
         if (fromNextDate) return fromNextDate;
 
         return toSafeActivityTs(new Date().getTime());
+    }
+
+    function ensureTaskCreatedAt(record) {
+        if (!record || typeof record !== 'object') return '';
+        const rawCreatedAt = String(record.created_at || '').trim();
+        if (rawCreatedAt) return rawCreatedAt;
+
+        const completedAt = String(record.completedAt || '').trim();
+        if (completedAt) {
+            record.created_at = completedAt;
+            return record.created_at;
+        }
+
+        const mainDate = String(record.date || '').trim();
+        const mainTime = String(record.time || '').trim();
+        if (mainDate) {
+            record.created_at = `${mainDate}T${mainTime || '00:00'}`;
+            return record.created_at;
+        }
+
+        const nextDate = String(record.nextDate || '').trim();
+        const nextTime = String(record.nextTime || '').trim();
+        if (nextDate) {
+            record.created_at = `${nextDate}T${nextTime || '00:00'}`;
+            return record.created_at;
+        }
+
+        const modifiedTs = toSafeActivityTs(record.modifiedAt);
+        if (modifiedTs) {
+            record.created_at = new Date(modifiedTs).toISOString();
+            return record.created_at;
+        }
+
+        record.created_at = new Date().toISOString();
+        return record.created_at;
+    }
+
+    function getTaskCreatedDateLabel(task) {
+        const createdAt = ensureTaskCreatedAt(task);
+        const createdDate = getDateOnlyFromIso(createdAt) || String(createdAt || '').split('T')[0] || '';
+        if (!createdDate) return '';
+        return `Создана ${formatDateRu(createdDate)}`;
     }
 
     function getClientLatestTaskCreatedAt(clientId) {
@@ -2077,6 +2124,7 @@
             id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             clientId: String(clientId),
             contactPersonId: '',
+            created_at: now.toISOString(),
             date: nowDate,
             time: nowTime,
             type: 'Исходящий',
@@ -2132,6 +2180,7 @@
             id: `${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
             clientId: String(selected.clientId),
             contactPersonId: '',
+            created_at: new Date(touchedTs).toISOString(),
             date: date,
             time: time || '00:00',
             type: 'Исходящий',
@@ -2481,6 +2530,63 @@
         document.getElementById('tab-history-content').classList.toggle('hidden', tab !== 'history');
     }
 
+    function updateClientContentTabCounts(clientId) {
+        const taskCountEl = document.getElementById('clientTasksTabCount');
+        const dealCountEl = document.getElementById('clientDealsTabCount');
+        const historyCountEl = document.getElementById('clientHistoryTabCount');
+        if (!taskCountEl || !dealCountEl || !historyCountEl) return;
+
+        if (!clientId) {
+            [taskCountEl, dealCountEl, historyCountEl].forEach((el) => {
+                el.textContent = '';
+                el.classList.add('hidden');
+            });
+            return;
+        }
+
+        const clientTasks = history.filter(h =>
+            String(h.clientId) === String(clientId) &&
+            h.nextStep &&
+            h.nextStep.trim() !== ''
+        );
+        const activeTasksCount = clientTasks.filter(h => h.taskStatus === 'new' || h.taskStatus === 'work').length;
+        const completedTasksCount = clientTasks.filter(h => h.taskStatus === 'done').length;
+
+        const clientDeals = deals
+            .map(d => ensureDealRecord(d))
+            .filter(d => String(d.client_id) === String(clientId));
+        const openDealsCount = clientDeals.filter(d => !isDealClosed(d)).length;
+        const totalDealsCount = clientDeals.length;
+
+        const counts = [
+            { el: taskCountEl, text: `${activeTasksCount}/${clientTasks.length}` },
+            { el: dealCountEl, text: `${openDealsCount}/${totalDealsCount}` },
+            { el: historyCountEl, text: `${completedTasksCount}` }
+        ];
+
+        counts.forEach(({ el, text }) => {
+            el.textContent = text;
+            el.classList.remove('hidden');
+            if (text === '0' || text === '0/0') {
+                el.style.opacity = '0.72';
+            } else {
+                el.style.opacity = '1';
+            }
+        });
+
+        taskCountEl.title = `Активные задачи / всего задач: ${activeTasksCount} / ${clientTasks.length}`;
+        dealCountEl.title = `Открытые сделки / всего сделок: ${openDealsCount} / ${totalDealsCount}`;
+        historyCountEl.title = `Выполнено задач: ${completedTasksCount}`;
+    }
+
+    function setDealTimingFilter(value) {
+        const normalized = ['today', 'overdue', 'week', 'open', 'all'].includes(String(value || '')) ? String(value) : 'open';
+        currentDealTimingFilter = normalized;
+        const timingSelect = document.getElementById('dealTimingFilter');
+        if (timingSelect) timingSelect.value = normalized;
+        renderDealsSidebar();
+    }
+
     // --- FILTER LOGIC ---
     function setTaskFilter(filter, btnElement) {
         currentTaskFilter = filter;
@@ -2600,7 +2706,33 @@
         if (!linked) return null;
         const badge = document.createElement('div');
         badge.style.cssText = 'display:inline-block; margin-top:4px; font-size:0.74rem; color:#1f4b8f; background:#eaf2ff; border:1px solid #cddfff; border-radius:999px; padding:2px 8px;';
-        badge.textContent = `🏷 Сделка: ${String(linked.title || 'без названия')}`;
+        const importantPrefix = linked.is_important ? '❗ ' : '';
+        const deliveryPrefix = linked.needs_delivery ? '🚚 ' : '';
+        badge.textContent = `🏷 Сделка: ${importantPrefix}${deliveryPrefix}${String(linked.title || 'без названия')}`;
+        return badge;
+    }
+
+    function getDealImportantPrefix(deal) {
+        return deal && deal.is_important ? '❗ ' : '';
+    }
+
+    function getDealDeliveryPrefix(deal) {
+        return deal && deal.needs_delivery ? '🚚 ' : '';
+    }
+
+    function createDealImportantBadge(deal) {
+        if (!deal || !deal.is_important) return null;
+        const badge = document.createElement('div');
+        badge.className = 'deal-important-mark';
+        badge.textContent = '❗ Важная';
+        return badge;
+    }
+
+    function createDealDeliveryBadge(deal) {
+        if (!deal || !deal.needs_delivery) return null;
+        const badge = document.createElement('div');
+        badge.className = 'deal-delivery-mark';
+        badge.textContent = '🚚 Нужна доставка';
         return badge;
     }
 
@@ -2690,7 +2822,9 @@
         const stageInput = document.getElementById('dealStageInput');
         const categoryInput = document.getElementById('dealCategoryInput');
         const notesInput = document.getElementById('dealNotesInput');
-        if (!titleEl || !idInput || !clientSearch || !clientIdInput || !titleInput || !amountInput || !nextDateInput || !statusInput || !stageInput || !categoryInput || !notesInput) return;
+        const importantInput = document.getElementById('dealImportantInput');
+        const deliveryInput = document.getElementById('dealDeliveryInput');
+        if (!titleEl || !idInput || !clientSearch || !clientIdInput || !titleInput || !amountInput || !nextDateInput || !statusInput || !stageInput || !categoryInput || !notesInput || !importantInput || !deliveryInput) return;
 
         renderDealClientOptions();
         renderDealStageInputOptions(deal ? deal.stage : 'Новый');
@@ -2709,6 +2843,8 @@
         stageInput.value = deal ? normalizeDealStage(deal.stage || 'Новый') : 'Новый';
         categoryInput.value = deal ? normalizeDealCategory(deal.category || 'Прочее') : 'Прочее';
         notesInput.value = deal ? String(deal.notes || '') : '';
+        importantInput.checked = Boolean(deal?.is_important);
+        deliveryInput.checked = Boolean(deal?.needs_delivery);
         populateDealContactPersonSelect(clientIdInput.value, deal ? String(deal.contact_person_id || '') : '');
         modal.classList.remove('hidden');
     }
@@ -2724,6 +2860,8 @@
         const category = normalizeDealCategory(String(document.getElementById('dealCategoryInput')?.value || 'Прочее'));
         const notes = String(document.getElementById('dealNotesInput')?.value || '').trim();
         const contactPersonId = String(document.getElementById('dealContactPersonSelect')?.value || '').trim();
+        const isImportant = Boolean(document.getElementById('dealImportantInput')?.checked);
+        const needsDelivery = Boolean(document.getElementById('dealDeliveryInput')?.checked);
         if (!title) return showToast('Название сделки обязательно', 'warn');
         if (!clientId) return showToast('Выберите контрагента из базы', 'warn');
         const nextTouchAt = /^\d{4}-\d{2}-\d{2}$/.test(nextDateRaw) ? new Date(`${nextDateRaw}T10:00:00`).toISOString() : '';
@@ -2741,7 +2879,9 @@
                 stage: status === 'active' ? stage : 'Закрыто',
                 category,
                 next_touch_at: status === 'active' ? nextTouchAt : '',
-                notes
+                notes,
+                is_important: isImportant,
+                needs_delivery: needsDelivery
             });
             currentDealId = dealId;
         } else {
@@ -2757,6 +2897,8 @@
                 created_at: new Date().toISOString(),
                 next_touch_at: status === 'active' ? nextTouchAt : '',
                 notes,
+                is_important: isImportant,
+                needs_delivery: needsDelivery,
                 followup_step: 1
             });
             deals.unshift(record);
@@ -2824,6 +2966,7 @@
             clientId,
             deal_id: String(deal.id || ''),
             contactPersonId: String(deal.contact_person_id || ''),
+            created_at: new Date(touchedTs).toISOString(),
             date: defaultDate,
             time: '',
             type: 'Задача по сделке',
@@ -3067,6 +3210,8 @@
         const stage = normalizeDealStage(String(document.getElementById('dealDetailStageInput')?.value || deal.stage || 'Новый'));
         const category = normalizeDealCategory(String(document.getElementById('dealDetailCategoryInput')?.value || deal.category || 'Прочее'));
         const notes = String(document.getElementById('dealDetailNotesInput')?.value || '');
+        const isImportant = Boolean(document.getElementById('dealDetailImportantInput')?.checked);
+        const needsDelivery = Boolean(document.getElementById('dealDetailDeliveryInput')?.checked);
         const nextTouchAt = /^\d{4}-\d{2}-\d{2}$/.test(nextDateRaw) ? new Date(`${nextDateRaw}T10:00:00`).toISOString() : '';
         const idx = deals.findIndex(d => String(d.id) === String(deal.id));
         if (idx < 0) return;
@@ -3080,7 +3225,9 @@
             stage: normalizedStage,
             next_touch_at: normalizedStatus === 'active' ? nextTouchAt : '',
             category,
-            notes
+            notes,
+            is_important: isImportant,
+            needs_delivery: needsDelivery
         });
         currentDealId = String(deal.id);
         saveData();
@@ -3253,7 +3400,7 @@
 
         const title = document.createElement('h4');
         title.className = 'deal-details-title';
-        title.textContent = deal.title || 'Сделка';
+        title.textContent = `${getDealImportantPrefix(deal)}${getDealDeliveryPrefix(deal)}${deal.title || 'Сделка'}`;
         const meta = document.createElement('div');
         meta.className = 'deal-details-meta';
         const amountText = Number(deal.amount || 0) > 0 ? ` · сумма ${Number(deal.amount).toLocaleString('ru-RU')} ₽` : '';
@@ -3296,6 +3443,16 @@
                 <button type="button" class="btn-primary btn-sm" data-action="manageDealOption" data-kind="category" data-mode="add" data-target="dealDetailCategoryInput">+</button>
                 <button type="button" class="btn-danger btn-sm" data-action="manageDealOption" data-kind="category" data-mode="remove" data-target="dealDetailCategoryInput">−</button>
             </div>
+            <div class="deal-flags-row" style="grid-column:1 / span 2;">
+                <label class="deal-flag-toggle important">
+                    <input id="dealDetailImportantInput" type="checkbox">
+                    <span>❗ Важная сделка</span>
+                </label>
+                <label class="deal-flag-toggle delivery">
+                    <input id="dealDetailDeliveryInput" type="checkbox">
+                    <span>🚚 Нужна доставка</span>
+                </label>
+            </div>
             <textarea id="dealDetailNotesInput" placeholder="Заметки по сделке" style="grid-column:1 / span 2; min-height:64px;"></textarea>
             <button type="button" class="btn-primary btn-sm" data-deal-detail-action="save-meta" data-deal-id="${escapeHtml(String(deal.id))}" style="grid-column:1 / span 2;">Сохранить параметры сделки</button>
         `;
@@ -3303,6 +3460,16 @@
         panel.appendChild(title);
         panel.appendChild(meta);
         panel.appendChild(contactMeta);
+        const importantBadge = createDealImportantBadge(deal);
+        if (importantBadge) {
+            importantBadge.style.marginBottom = '8px';
+            panel.appendChild(importantBadge);
+        }
+        const deliveryBadge = createDealDeliveryBadge(deal);
+        if (deliveryBadge) {
+            deliveryBadge.style.marginBottom = '8px';
+            panel.appendChild(deliveryBadge);
+        }
         if (isDealClosed(deal)) {
             const detailClosedChip = document.createElement('div');
             detailClosedChip.className = 'deal-closed-chip';
@@ -3321,7 +3488,7 @@
             tasksWrap.appendChild(tasksTitle);
             linkedTasks.forEach((t) => {
                 const row = document.createElement('div');
-                row.style.cssText = 'display:flex; align-items:center; gap:8px; font-size:0.76rem; margin-bottom:4px;';
+                row.style.cssText = 'display:flex; flex-direction:column; align-items:flex-start; gap:3px; font-size:0.76rem; margin-bottom:6px;';
                 const taskText = String(t.nextStep || t.desc || 'Задача');
                 const doneResult = String(t.result || '').trim();
                 const suffix = t.taskStatus === 'done'
@@ -3330,7 +3497,7 @@
                 row.className = t.taskStatus === 'done' ? 'deal-linked-task-row done' : 'deal-linked-task-row';
                 row.dataset.action = 'dealOpenTask';
                 row.dataset.taskId = String(t.id || '');
-                row.innerHTML = `<span>${escapeHtml(`${taskText}${suffix}`)}</span>`;
+                row.innerHTML = `<span>${escapeHtml(`${taskText}${suffix}`)}</span><span class="task-created-meta">${escapeHtml(getTaskCreatedDateLabel(t))}</span>`;
                 tasksWrap.appendChild(row);
             });
             panel.appendChild(tasksWrap);
@@ -3350,12 +3517,18 @@
         if (nextDateInput) nextDateInput.value = getDateOnlyFromIso(deal.next_touch_at);
         if (stageInput) stageInput.value = normalizeDealStage(deal.stage || 'Новый');
         if (categoryInput) categoryInput.value = normalizeDealCategory(deal.category || 'Прочее');
+        const importantInput = document.getElementById('dealDetailImportantInput');
+        if (importantInput) importantInput.checked = Boolean(deal.is_important);
+        const deliveryInput = document.getElementById('dealDetailDeliveryInput');
+        if (deliveryInput) deliveryInput.checked = Boolean(deal.needs_delivery);
         if (notesInput) notesInput.value = String(deal.notes || '');
     }
 
     function renderDealReminderSummary() {
         const todayEl = document.getElementById('dealTodayCount');
         const overdueEl = document.getElementById('dealOverdueCount');
+        const todayChip = todayEl ? todayEl.closest('.deal-summary-chip') : null;
+        const overdueChip = overdueEl ? overdueEl.closest('.deal-summary-chip') : null;
         if (!todayEl || !overdueEl) return;
         const activeDeals = (Array.isArray(deals) ? deals : [])
             .map(d => ensureDealRecord(d))
@@ -3364,6 +3537,8 @@
         const overdueCount = activeDeals.filter(d => getDealTimeBucket(d) === 'overdue').length;
         todayEl.textContent = String(todayCount);
         overdueEl.textContent = String(overdueCount);
+        if (todayChip) todayChip.classList.toggle('active', currentDealTimingFilter === 'today');
+        if (overdueChip) overdueChip.classList.toggle('active', currentDealTimingFilter === 'overdue');
     }
 
     function renderDashboardDealsQueue() {
@@ -3398,17 +3573,18 @@
         queue.slice(0, 6).forEach((deal) => {
             const client = clients.find(c => String(c.id) === String(deal.client_id));
             const item = document.createElement('div');
-            item.className = 'dashboard-deal-item clickable';
+            item.className = `dashboard-deal-item clickable${deal.is_important ? ' important' : ''}`;
+            item.dataset.action = 'openDealFromDashboard';
+            item.dataset.dealId = String(deal.id || '');
             const bucket = getDealTimeBucket(deal);
             const badge = bucket === 'overdue' ? '🔴' : (bucket === 'today' ? '🟢' : '🔵');
             item.innerHTML = `
                 <div style="display:flex; justify-content:space-between; gap:8px;">
-                    <strong>${badge} ${escapeHtml(String(deal.title || 'Сделка'))}</strong>
+                    <strong>${escapeHtml(`${getDealImportantPrefix(deal)}${getDealDeliveryPrefix(deal)}${String(deal.title || 'Сделка')}`)}</strong>
                     <span>${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}</span>
                 </div>
-                <div style="font-size:0.74rem; color:#5f7286; margin-top:4px; display:flex; justify-content:space-between; gap:8px; align-items:center;">
-                    <span>${escapeHtml(String(client?.name || 'Без клиента'))} · ${escapeHtml(getDealHeatLabel(deal.heat))}</span>
-                    <button type="button" class="btn-sm btn-primary" data-action="openDealFromDashboard" data-deal-id="${escapeHtml(String(deal.id || ''))}">Открыть</button>
+                <div style="font-size:0.74rem; color:#5f7286; margin-top:4px;">
+                    <span>${escapeHtml(String(client?.name || 'Без клиента'))} · ${escapeHtml(getDealHeatLabel(deal.heat))}${deal.is_important ? ' · ❗ важная' : ''}${deal.needs_delivery ? ' · 🚚 доставка' : ''}</span>
                 </div>
             `;
             wrap.appendChild(item);
@@ -3472,14 +3648,14 @@
             const item = document.createElement('div');
             const isActiveDeal = String(deal.id) === String(currentDealId);
             const isOverdueDeal = getDealTimeBucket(deal) === 'overdue';
-            item.className = `deal-item${isActiveDeal ? ' active' : ''}${isOverdueDeal ? ' overdue' : ''}`;
+            item.className = `deal-item${isActiveDeal ? ' active' : ''}${isOverdueDeal ? ' overdue' : ''}${deal.is_important ? ' important' : ''}`;
             item.dataset.dealId = String(deal.id || '');
             item.title = deal.notes || '';
 
             const head = document.createElement('div');
             head.className = 'deal-item-head';
             const left = document.createElement('span');
-            left.textContent = `${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}`;
+            left.textContent = `${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}${deal.is_important ? ' · ❗ важная' : ''}${deal.needs_delivery ? ' · 🚚 доставка' : ''}`;
             const right = document.createElement('span');
             right.textContent = `Срок: ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
             head.appendChild(left);
@@ -3487,7 +3663,7 @@
 
             const title = document.createElement('div');
             title.className = 'deal-item-title';
-            title.textContent = deal.title || 'Сделка без названия';
+            title.textContent = `${getDealImportantPrefix(deal)}${getDealDeliveryPrefix(deal)}${deal.title || 'Сделка без названия'}`;
 
             const clientLine = document.createElement('div');
             clientLine.className = 'deal-item-client';
@@ -4519,6 +4695,7 @@
         renderTasks(id);
         renderClientDealsList(id);
         renderHistoryList(id);
+        updateClientContentTabCounts(id);
         switchContentTab(currentContentTab);
     }
 
@@ -4666,6 +4843,9 @@
             const desc = document.createElement('div');
             desc.className = 'task-desc';
             desc.textContent = t.nextStep || '';
+            const createdMeta = document.createElement('div');
+            createdMeta.className = 'task-created-meta';
+            createdMeta.textContent = getTaskCreatedDateLabel(t);
             const dealBadge = createTaskDealBadge(t);
             const contactEl = document.createElement('div');
             contactEl.className = 'task-contact-mini';
@@ -4703,6 +4883,7 @@
             div.appendChild(dateRow);
             div.appendChild(clientEl);
             div.appendChild(desc);
+            div.appendChild(createdMeta);
             if (dealBadge) div.appendChild(dealBadge);
             if (contactPerson) div.appendChild(contactEl);
             div.appendChild(tempMeta);
@@ -4788,6 +4969,8 @@
         document.getElementById('tvResult').innerText = prevResult || '-';
         const taskTopicText = String(task.nextStep || task.desc || '-');
         document.getElementById('tvDesc').innerText = taskTopicText;
+        const tvCreatedAt = document.getElementById('tvCreatedAt');
+        if (tvCreatedAt) tvCreatedAt.innerText = getTaskCreatedDateLabel(task);
         const tvDescEdit = document.getElementById('tvDescEdit');
         if (tvDescEdit) tvDescEdit.value = taskTopicText === '-' ? '' : taskTopicText;
 
@@ -5492,6 +5675,9 @@
             const step = document.createElement('div');
             step.style.fontWeight = '600';
             step.textContent = t.nextStep || '';
+            const createdMeta = document.createElement('div');
+            createdMeta.className = 'task-created-meta';
+            createdMeta.textContent = getTaskCreatedDateLabel(t);
             const dealBadge = createTaskDealBadge(t);
 
             const tempRow = document.createElement('div');
@@ -5513,6 +5699,7 @@
             div.appendChild(actions);
             div.appendChild(head);
             div.appendChild(step);
+            div.appendChild(createdMeta);
             if (dealBadge) div.appendChild(dealBadge);
             div.appendChild(tempRow);
             div.appendChild(tempReason);
@@ -5546,16 +5733,16 @@
                 ? client.contacts.map((item, idx) => normalizeContact(item, idx)).find(item => String(item.id || '') === String(deal.contact_person_id || '')) || null
                 : null;
             const item = document.createElement('div');
-            item.className = `deal-item ${String(currentDealId || '') === String(deal.id || '') ? 'active' : ''}`;
+            item.className = `deal-item ${String(currentDealId || '') === String(deal.id || '') ? 'active' : ''}${deal.is_important ? ' important' : ''}`;
             item.dataset.dealId = String(deal.id || '');
 
             const head = document.createElement('div');
             head.className = 'deal-item-head';
-            head.innerHTML = `<span>${escapeHtml(`${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}`)}</span><span>Срок: ${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}</span>`;
+            head.innerHTML = `<span>${escapeHtml(`${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}${deal.is_important ? ' · ❗ важная' : ''}${deal.needs_delivery ? ' · 🚚 доставка' : ''}`)}</span><span>Срок: ${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}</span>`;
 
             const title = document.createElement('div');
             title.className = 'deal-item-title';
-            title.textContent = String(deal.title || 'Сделка');
+            title.textContent = `${getDealImportantPrefix(deal)}${getDealDeliveryPrefix(deal)}${String(deal.title || 'Сделка')}`;
 
             const meta = document.createElement('div');
             meta.className = 'deal-item-meta';
@@ -5650,6 +5837,9 @@
             topicStrong.textContent = 'Тема:';
             topic.appendChild(topicStrong);
             topic.appendChild(document.createTextNode(` ${h.desc || h.nextStep || '-'}`));
+            const createdMeta = document.createElement('div');
+            createdMeta.className = 'task-created-meta';
+            createdMeta.textContent = getTaskCreatedDateLabel(h);
             const dealBadge = createTaskDealBadge(h);
 
             const result = document.createElement('div');
@@ -5666,6 +5856,7 @@
             div.appendChild(actions);
             div.appendChild(head);
             div.appendChild(topic);
+            div.appendChild(createdMeta);
             if (dealBadge) div.appendChild(dealBadge);
             div.appendChild(result);
             div.appendChild(done);
@@ -5885,6 +6076,9 @@
             const step = document.createElement('div');
             step.style.cssText = 'font-size:0.9rem; color:#444;';
             step.textContent = t.nextStep || '-';
+            const createdMeta = document.createElement('div');
+            createdMeta.className = 'task-created-meta';
+            createdMeta.textContent = getTaskCreatedDateLabel(t);
             const dealBadge = createTaskDealBadge(t);
 
             const tempMeta = document.createElement('div');
@@ -5956,6 +6150,7 @@
             item.appendChild(head);
             item.appendChild(clientName);
             item.appendChild(step);
+            item.appendChild(createdMeta);
             if (dealBadge) item.appendChild(dealBadge);
             item.appendChild(tempMeta);
             item.appendChild(tempReason);
@@ -6662,6 +6857,7 @@
             clientId: clientId,
             deal_id: existingRecord ? String(existingRecord.deal_id || '') : '',
             contactPersonId: selectedContactPersonId,
+            created_at: existingRecord ? String(existingRecord.created_at || '') : new Date(touchedTs).toISOString(),
             date: date,
             time: time,
             type: type,
@@ -6705,6 +6901,7 @@
             });
         }
         ensureWorkItemTempFields(record, new Date(touchedTs));
+        ensureTaskCreatedAt(record);
 
         if (status !== 'done' && existingRecord) {
             const newDueIso = String(record.due_at || buildTaskDueIso(record) || '');

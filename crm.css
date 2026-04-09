@@ -202,6 +202,7 @@
         .task-action-btn.delete { color: var(--danger); border-color: #f7c6c1; }
         .task-action-btn.deal { color: #7b3fe4; border-color: #e2d4ff; }
         .task-action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+        .task-created-meta { font-size:0.72rem; color:#7d8b99; margin-top:5px; }
         .task-client-link { color: var(--primary); cursor: pointer; text-decoration: underline; font-weight: 600; }
         .deal-item { 
             padding: 10px;
@@ -225,12 +226,37 @@
             background:#fff0ed;
         }
         .deal-item:hover { background: #fbf8ff; }
+        .deal-item.important {
+            border-color:#f5d6be;
+            border-left-color:#f29b67;
+            background:#fffaf6;
+        }
+        .deal-item.important:hover { background:#fff5ee; }
+        .deal-item.active.important {
+            border-color:#efc9ae;
+            border-left-color:#ef8f54;
+            background:#fff6ef;
+        }
+        .deal-item.overdue.important {
+            border-color:#efc2b9;
+            border-left-color:#e67e5f;
+            background:#fff4f0;
+        }
         .deal-item-head { display:flex; justify-content:space-between; gap:8px; font-size:0.8rem; color:#5f6f83; }
         .deal-item-client { font-size:0.95rem; font-weight:800; color:#0f172a; margin:4px 0 1px; line-height:1.25; }
         .deal-item-title { font-size:0.84rem; font-weight:600; color:#334155; margin:0 0 3px; line-height:1.3; }
         .deal-item-meta { font-size:0.75rem; color:#607487; }
         .deal-item-actions { display:flex; gap:6px; margin-top:7px; flex-wrap:wrap; }
         .deal-item-actions .btn-sm { padding:3px 8px; }
+        .deal-important-mark { display:inline-flex; align-items:center; gap:4px; font-size:0.76rem; font-weight:700; color:#c2410c; background:#fff4e8; border:1px solid #ffd4ba; border-radius:999px; padding:2px 8px; }
+        .deal-important-inline { color:#c2410c; font-weight:700; }
+        .deal-delivery-mark { display:inline-flex; align-items:center; gap:4px; font-size:0.76rem; font-weight:700; color:#1d4f91; background:#eef6ff; border:1px solid #cfe1ff; border-radius:999px; padding:2px 8px; }
+        .deal-delivery-inline { color:#1d4f91; font-weight:700; }
+        .deal-flags-row { display:flex; flex-wrap:wrap; gap:8px; align-items:center; }
+        .deal-flag-toggle { display:inline-flex; align-items:center; gap:6px; font-size:0.8rem; border:1px solid #e2e8f0; border-radius:999px; padding:6px 10px; background:#fff; cursor:pointer; width:auto; }
+        .deal-flag-toggle.important { color:#92400e; background:#fff7ef; border-color:#f2d2bd; }
+        .deal-flag-toggle.delivery { color:#1d4f91; background:#f4f8ff; border-color:#d6e4ff; }
+        .deal-flag-toggle input { margin:0; }
         .deal-closed-chip {
             display:inline-flex;
             align-items:center;
@@ -335,8 +361,39 @@
             margin-bottom: 6px;
             font-size: 0.78rem;
         }
+        .dashboard-deal-item.important {
+            border-color:#f2d8c2;
+            background:#fffaf6;
+        }
         .dashboard-deal-item.clickable { cursor: pointer; }
         .dashboard-deal-item.clickable:hover { background:#f7f3ff; }
+        .dashboard-deal-item.clickable.important:hover { background:#fff4ec; }
+        .deal-summary-chip {
+            flex:1;
+            font-size:0.74rem;
+            border-radius:6px;
+            padding:5px 6px;
+            cursor:pointer;
+            transition:background 0.18s ease, border-color 0.18s ease, box-shadow 0.18s ease;
+            user-select:none;
+        }
+        .deal-summary-chip.today {
+            color:#6a5a12;
+            background:#fff8de;
+            border:1px solid #f3e0a0;
+        }
+        .deal-summary-chip.overdue {
+            color:#9d2418;
+            background:#fff0ee;
+            border:1px solid #f2c2bc;
+        }
+        .deal-summary-chip:hover {
+            box-shadow:0 2px 8px rgba(15, 23, 42, 0.06);
+        }
+        .deal-summary-chip.active {
+            box-shadow:0 0 0 2px rgba(79, 124, 255, 0.12);
+            border-color:#9ebeff;
+        }
         .toast-root {
             position: fixed;
             right: 14px;
@@ -503,8 +560,10 @@
 
         /* Tabs inside Main */
         .content-tabs { display: flex; border-bottom: 2px solid #eee; margin-bottom: 20px; }
-        .content-tab { padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 500; color: #7f8c8d; }
+        .content-tab { display:flex; align-items:center; gap:8px; padding: 10px 20px; cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -2px; font-weight: 500; color: #7f8c8d; }
         .content-tab.active { border-bottom-color: var(--primary); color: var(--primary); }
+        .content-tab-count { display:inline-flex; align-items:center; justify-content:center; min-width:24px; height:20px; padding:0 7px; border-radius:999px; background:#eef3f8; color:#5d6d7e; font-size:0.74rem; font-weight:700; line-height:1; }
+        .content-tab.active .content-tab-count { background:#e7f1ff; color:var(--primary); }
         
         /* History/Tasks List in Main */
         .history-item, .main-task-item { border-left: 4px solid #ccc; padding: 15px; margin-bottom: 15px; background: #fafafa; border-radius: 0 4px 4px 0; position: relative; cursor: pointer; }

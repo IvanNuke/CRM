@@ -127,10 +127,10 @@
                     Сделка и связанные задачи: создавайте задачу прямо из сделки.
                 </div>
                 <div style="display:flex; gap:6px; padding:0 5px; margin-bottom:8px;">
-                    <div style="flex:1; font-size:0.74rem; color:#6a5a12; background:#fff8de; border:1px solid #f3e0a0; border-radius:6px; padding:5px 6px;">
+                    <div class="deal-summary-chip today" data-action="setDealTimingFilter" data-deal-timing-filter="today">
                         Сегодня: <strong id="dealTodayCount">0</strong>
                     </div>
-                    <div style="flex:1; font-size:0.74rem; color:#9d2418; background:#fff0ee; border:1px solid #f2c2bc; border-radius:6px; padding:5px 6px;">
+                    <div class="deal-summary-chip overdue" data-action="setDealTimingFilter" data-deal-timing-filter="overdue">
                         Просрочено: <strong id="dealOverdueCount">0</strong>
                     </div>
                 </div>
@@ -318,9 +318,18 @@
             </div>
 
             <div class="content-tabs">
-                <div class="content-tab active" data-tab="tasks" data-action="switchContentTab">📋 Задачи клиента</div>
-                <div class="content-tab" data-tab="deals" data-action="switchContentTab">🏷️ Сделки</div>
-                <div class="content-tab" data-tab="history" data-action="switchContentTab">🕒 История</div>
+                <div class="content-tab active" data-tab="tasks" data-action="switchContentTab">
+                    <span>📋 Задачи клиента</span>
+                    <span id="clientTasksTabCount" class="content-tab-count hidden"></span>
+                </div>
+                <div class="content-tab" data-tab="deals" data-action="switchContentTab">
+                    <span>🏷️ Сделки</span>
+                    <span id="clientDealsTabCount" class="content-tab-count hidden"></span>
+                </div>
+                <div class="content-tab" data-tab="history" data-action="switchContentTab">
+                    <span>🕒 История</span>
+                    <span id="clientHistoryTabCount" class="content-tab-count hidden"></span>
+                </div>
             </div>
 
             <div id="tab-tasks-content"><div id="tasksList"></div></div>
@@ -509,6 +518,7 @@
         <div style="margin-bottom:15px;">
             <label>Тема текущей задачи</label>
             <div id="tvDesc" style="background:#f8f9fa; border:1px solid #eee; border-radius:4px; padding:10px; white-space:pre-wrap;">-</div>
+            <div id="tvCreatedAt" class="task-created-meta" style="margin-top:6px;">-</div>
             <textarea id="tvDescEdit" class="hidden" style="margin-top:8px; min-height:90px;" placeholder="Опишите подробности шага..."></textarea>
             <div id="tvProgressDraftBar" class="hidden" style="margin-top:8px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap;">
                 <div style="font-size:0.85rem; color:#555;">Шаг: <strong id="tvProgressDraftTypeLabel">-</strong></div>
@@ -730,6 +740,18 @@
         <div class="form-group">
             <label>Заметки</label>
             <textarea id="dealNotesInput" placeholder="Комментарий по сделке" style="min-height:88px;"></textarea>
+        </div>
+        <div class="form-group">
+            <div class="deal-flags-row">
+                <label class="deal-flag-toggle important">
+                    <input type="checkbox" id="dealImportantInput">
+                    <span>❗ Важная сделка</span>
+                </label>
+                <label class="deal-flag-toggle delivery">
+                    <input type="checkbox" id="dealDeliveryInput">
+                    <span>🚚 Нужна доставка</span>
+                </label>
+            </div>
         </div>
         <div style="text-align:right;">
             <button class="btn-danger" data-action="closeModal" data-modal="dealModal" style="margin-right:8px;">Отмена</button>
