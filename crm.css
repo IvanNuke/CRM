@@ -204,6 +204,20 @@
         .task-action-btn:disabled { opacity: 0.6; cursor: not-allowed; }
         .task-created-meta { font-size:0.72rem; color:#7d8b99; margin-top:5px; }
         .task-client-link { color: var(--primary); cursor: pointer; text-decoration: underline; font-weight: 600; }
+        .task-topic-template-row {
+            display:grid;
+            grid-template-columns:minmax(0, 1fr) auto auto auto;
+            gap:6px;
+            align-items:center;
+            margin:0 0 8px;
+        }
+        .task-topic-template-row select {
+            min-width:0;
+        }
+        .task-topic-template-row .btn-sm {
+            white-space:nowrap;
+            padding:6px 9px;
+        }
         .deal-item { 
             padding: 10px;
             border: 1px solid #e7edf5;
@@ -272,6 +286,21 @@
             padding:2px 9px;
             margin:5px 0 2px;
         }
+        .deal-closed-chip.won {
+            background:#eaf8ef;
+            color:#166534;
+            border-color:#b9e4c7;
+        }
+        .deal-closed-chip.lost {
+            background:#fff1ed;
+            color:#9f2a18;
+            border-color:#f4c2b7;
+        }
+        .deal-closed-chip.unknown {
+            background:#f1f5f9;
+            color:#475569;
+            border-color:#d8e0ea;
+        }
         .deal-last-task {
             margin-top:6px;
             padding:6px 8px;
@@ -323,6 +352,15 @@
             background:#e9edf1;
             border-color:#c8cfd8;
         }
+        .deal-linked-task-meta {
+            display:flex;
+            flex-wrap:wrap;
+            gap:8px;
+            font-size:0.72rem;
+            line-height:1.35;
+        }
+        .deal-linked-task-due { color:#1d4f91; font-weight:700; }
+        .deal-linked-task-contact { color:#607487; }
         .deal-details-panel {
             margin-top: 6px;
             border: 1px solid #e8edf5;
@@ -333,6 +371,18 @@
         #dealDetailsView .card { margin-bottom: 0; }
         .deal-details-title { margin:0 0 6px; font-size:0.9rem; color:#1f2937; }
         .deal-details-meta { font-size:0.78rem; color:#5f6f83; margin-bottom:8px; }
+        .deal-client-link {
+            border:0;
+            background:transparent;
+            color:#1d4f91;
+            font:inherit;
+            font-weight:700;
+            padding:0;
+            cursor:pointer;
+            text-decoration:underline;
+            text-underline-offset:2px;
+        }
+        .deal-client-link:hover { color:#123a6d; }
         .deal-touch-list { display:flex; flex-direction:column; gap:6px; max-height:200px; overflow:auto; }
         .deal-touch-item { border:1px solid #eef2f6; border-radius:6px; padding:6px; background:#fbfdff; }
         .deal-touch-item-head { display:flex; justify-content:space-between; gap:8px; font-size:0.73rem; color:#607487; }

@@ -314,7 +314,10 @@
                     <span id="detailNotes" style="color:#666; white-space: pre-wrap;">-</span>
                 </div>
                 
-                <button data-action="openHistoryModal" class="btn-primary" style="width:100%; padding:12px;">📞 Записать контакт / Задачу</button>
+                <div style="display:grid; grid-template-columns: 1fr 1fr; gap:8px;">
+                    <button data-action="openHistoryModal" class="btn-primary" style="padding:12px;">📞 Записать контакт / Задачу</button>
+                    <button data-action="openCreateDealPrompt" class="btn-success" style="padding:12px;">🏷️ Создать сделку</button>
+                </div>
             </div>
 
             <div class="content-tabs">
@@ -449,6 +452,14 @@
         </div>
         <div class="form-group">
             <label>Тема</label>
+            <div class="task-topic-template-row">
+                <select id="taskTopicTemplateSelect">
+                    <option value="">Шаблоны темы</option>
+                </select>
+                <button type="button" class="btn-primary btn-sm" data-action="applyTaskTopicTemplate">Вставить</button>
+                <button type="button" class="btn-success btn-sm" data-action="addTaskTopicTemplate">+ Шаблон</button>
+                <button type="button" class="btn-danger btn-sm" data-action="deleteTaskTopicTemplate">Удалить</button>
+            </div>
             <textarea id="hTopic" placeholder="Тема задачи..."></textarea>
         </div>
         <div class="form-group">
@@ -715,9 +726,9 @@
             <div class="form-group">
                 <label>Статус</label>
                 <select id="dealStatusInput">
-                    <option value="active">active</option>
-                    <option value="won">won</option>
-                    <option value="lost">lost</option>
+                    <option value="active">В работе</option>
+                    <option value="won">Выиграли</option>
+                    <option value="lost">Клиент отказался</option>
                 </select>
             </div>
             <div class="form-group">

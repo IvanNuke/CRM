@@ -40,6 +40,7 @@
     let clientTypeOptions = ['Не указан', 'Монтажник', 'Перекуп', 'Частник', 'Для собственных нужд'];
     let dealStageOptions = getDefaultDealStageOptions();
     let dealCategoryOptions = getDefaultDealCategoryOptions();
+    let taskTopicTemplates = [];
     let dbFileHandle = null;
     let dbDirty = false;
     let dbLastFileSaveAt = 0;
@@ -71,6 +72,7 @@
         const storedClientTypeOptions = CRMStore.get('clientTypeOptions');
         const storedDealStageOptions = CRMStore.get('dealStageOptions');
         const storedDealCategoryOptions = CRMStore.get('dealCategoryOptions');
+        const storedTaskTopicTemplates = CRMStore.get('taskTopicTemplates');
         const storedClientSort = CRMStore.get('clientSort');
         const storedClientTaskTouched = CRMStore.get('clientTaskTouched');
         const storedClientLastContact = CRMStore.get('clientLastContact');
@@ -159,6 +161,12 @@
                 dealCategoryOptions = normalizeDealOptionList(parsed, getDefaultDealCategoryOptions(), ['Прочее']);
             } catch(e) {}
         }
+        if (storedTaskTopicTemplates) {
+            try {
+                const parsed = JSON.parse(storedTaskTopicTemplates);
+                taskTopicTemplates = normalizeTaskTopicTemplates(parsed);
+            } catch(e) {}
+        }
         if (storedDbLastJsonSaveAt) {
             const ts = parseInt(storedDbLastJsonSaveAt, 10);
             if (Number.isFinite(ts) && ts > 0) dbLastFileSaveAt = ts;
@@ -199,6 +207,7 @@
         pruneCallSessionLog();
         CRMStore.set('classMigrationDone', '1');
         renderClientTypeOptions();
+        renderTaskTopicTemplateOptions();
         renderAllDealOptionControls();
         bindClientModalValidationLive();
         const sortSelect = document.getElementById('clientSort');
@@ -368,6 +377,9 @@
             exportManagerReport: () => exportManagerReport(),
             saveRescheduledTask: () => saveRescheduledTask(),
             saveDealTouchModal: () => saveDealTouchModal(),
+            applyTaskTopicTemplate: () => applyTaskTopicTemplate(),
+            addTaskTopicTemplate: () => addTaskTopicTemplate(),
+            deleteTaskTopicTemplate: () => deleteTaskTopicTemplate(),
             openDealsSidebar: () => openDealsSidebar()
         };
 
@@ -434,6 +446,8 @@
         if (globalTaskDate) globalTaskDate.addEventListener('change', () => setGlobalTaskDateFilter(globalTaskDate.value));
         const globalTaskSort = document.getElementById('globalTaskSort');
         if (globalTaskSort) globalTaskSort.addEventListener('change', () => setGlobalTaskSort(globalTaskSort.value));
+        const taskTopicTemplateSelect = document.getElementById('taskTopicTemplateSelect');
+        if (taskTopicTemplateSelect) taskTopicTemplateSelect.addEventListener('dblclick', () => applyTaskTopicTemplate());
         const dealTouchManualToggle = document.getElementById('dealTouchManualNextToggle');
         if (dealTouchManualToggle) {
             dealTouchManualToggle.addEventListener('change', () => syncDealTouchModalManualNextState());
@@ -2296,6 +2310,82 @@
         }
     }
 
+    function normalizeTaskTopicTemplates(list) {
+        if (!Array.isArray(list)) return [];
+        const seen = new Set();
+        return list
+            .map(item => String(item || '').trim())
+            .filter(Boolean)
+            .filter((item) => {
+                const key = item.toLowerCase();
+                if (seen.has(key)) return false;
+                seen.add(key);
+                return true;
+            })
+            .slice(0, 100);
+    }
+
+    function saveTaskTopicTemplates() {
+        taskTopicTemplates = normalizeTaskTopicTemplates(taskTopicTemplates);
+        CRMStore.setJSON('taskTopicTemplates', taskTopicTemplates);
+        renderTaskTopicTemplateOptions();
+    }
+
+    function renderTaskTopicTemplateOptions(selectedValue = '') {
+        const select = document.getElementById('taskTopicTemplateSelect');
+        if (!select) return;
+        const current = selectedValue || select.value || '';
+        select.replaceChildren();
+        const empty = document.createElement('option');
+        empty.value = '';
+        empty.textContent = taskTopicTemplates.length ? 'Шаблоны темы' : 'Нет шаблонов';
+        select.appendChild(empty);
+        taskTopicTemplates.forEach((template) => {
+            const opt = document.createElement('option');
+            opt.value = template;
+            opt.textContent = template.length > 70 ? `${template.slice(0, 67)}...` : template;
+            select.appendChild(opt);
+        });
+        if (taskTopicTemplates.includes(current)) select.value = current;
+    }
+
+    function applyTaskTopicTemplate() {
+        const select = document.getElementById('taskTopicTemplateSelect');
+        const topic = document.getElementById('hTopic');
+        if (!select || !topic) return;
+        const template = String(select.value || '').trim();
+        if (!template) return showToast('Выберите шаблон темы', 'warn');
+        topic.value = template;
+        topic.focus();
+    }
+
+    function addTaskTopicTemplate() {
+        const topic = document.getElementById('hTopic');
+        if (!topic) return;
+        const template = String(topic.value || '').trim();
+        if (!template) return showToast('Введите тему, чтобы сохранить её как шаблон', 'warn');
+        const exists = taskTopicTemplates.some(item => item.toLowerCase() === template.toLowerCase());
+        if (exists) {
+            renderTaskTopicTemplateOptions(template);
+            return showToast('Такой шаблон уже есть', 'warn');
+        }
+        taskTopicTemplates.unshift(template);
+        saveTaskTopicTemplates();
+        renderTaskTopicTemplateOptions(template);
+        showToast('Шаблон темы добавлен', 'success');
+    }
+
+    function deleteTaskTopicTemplate() {
+        const select = document.getElementById('taskTopicTemplateSelect');
+        if (!select) return;
+        const template = String(select.value || '').trim();
+        if (!template) return showToast('Выберите шаблон для удаления', 'warn');
+        if (!confirm('Удалить выбранный шаблон темы?')) return;
+        taskTopicTemplates = taskTopicTemplates.filter(item => item !== template);
+        saveTaskTopicTemplates();
+        showToast('Шаблон темы удалён', 'success');
+    }
+
     function renderDealStageInputOptions(selectedValue = '') {
         renderSelectOptions(document.getElementById('dealStageInput'), dealStageOptions, normalizeDealStage(selectedValue || document.getElementById('dealStageInput')?.value || 'Новый'));
     }
@@ -2654,8 +2744,8 @@
         if (result === 'rescheduled') return 'Перенесено';
         if (result === 'price_discussion') return 'Обсуждали цену';
         if (result === 'waiting') return 'Ожидание';
-        if (result === 'won') return 'Выиграно';
-        if (result === 'lost') return 'Проиграно';
+        if (result === 'won') return 'Выиграли';
+        if (result === 'lost') return 'Клиент отказался';
         return 'Другое';
     }
 
@@ -2667,6 +2757,22 @@
         const status = normalizeDealStatus(deal?.status);
         const stage = normalizeDealStage(deal?.stage);
         return status === 'won' || status === 'lost' || stage === 'Закрыто';
+    }
+
+    function getDealOutcomeInfo(deal) {
+        const status = normalizeDealStatus(deal?.status);
+        if (status === 'won') return { label: 'Выиграли', className: 'won' };
+        if (status === 'lost') return { label: 'Клиент отказался', className: 'lost' };
+        return { label: 'Закрыта: результат не указан', className: 'unknown' };
+    }
+
+    function createDealClosedChip(deal) {
+        if (!isDealClosed(deal)) return null;
+        const outcome = getDealOutcomeInfo(deal);
+        const chip = document.createElement('div');
+        chip.className = `deal-closed-chip ${outcome.className}`;
+        chip.textContent = outcome.label;
+        return chip;
     }
 
     function getTasksLinkedToDeal(deal) {
@@ -3325,14 +3431,16 @@
     function closeDealQuick(dealId, status) {
         const deal = getDealById(dealId);
         if (!deal) return showToast('Сделка не найдена', 'error');
-        if (!confirm(`Закрыть сделку как ${status}?`)) return;
+        const normalizedStatus = status === 'won' ? 'won' : 'lost';
+        const outcome = getDealOutcomeInfo({ status: normalizedStatus });
+        if (!confirm(`Закрыть сделку: ${outcome.label}?`)) return;
         const idx = deals.findIndex(d => String(d.id) === String(deal.id));
         if (idx < 0) return;
         const nowIso = new Date().toISOString();
         const overdueAdd = getOverdueDaysBetween(deal.next_touch_at, nowIso);
         const nextDeal = ensureDealRecord({
             ...deal,
-            status: status === 'won' ? 'won' : 'lost',
+            status: normalizedStatus,
             stage: 'closed',
             next_touch_at: '',
             last_touch_at: nowIso,
@@ -3342,12 +3450,12 @@
         touches.unshift(ensureTouchRecord({
             deal_id: deal.id,
             touch_type: 'other',
-            result: status === 'won' ? 'won' : 'lost',
-            comment: `Сделка закрыта как ${status}`
+            result: normalizedStatus,
+            comment: `Сделка закрыта: ${outcome.label}`
         }));
         currentDealId = nextDeal.id;
         saveData();
-        showToast(`Сделка закрыта: ${status}`, 'success');
+        showToast(`Сделка закрыта: ${outcome.label}`, 'success');
     }
 
     function openCreateDealFromTask(taskId) {
@@ -3404,7 +3512,8 @@
         const meta = document.createElement('div');
         meta.className = 'deal-details-meta';
         const amountText = Number(deal.amount || 0) > 0 ? ` · сумма ${Number(deal.amount).toLocaleString('ru-RU')} ₽` : '';
-        meta.textContent = `${client ? client.name : 'Без клиента'} · ${normalizeDealStage(deal.stage)} · ${getDealHeatLabel(deal.heat)}${amountText} · срок ${getDealNextTouchDateLabel(deal.next_touch_at)}`;
+        const clientLabel = client ? String(client.name || 'Без имени') : 'Без клиента';
+        meta.innerHTML = `${client ? `<button type="button" class="deal-client-link" data-action="dealOpenClient" data-client-id="${escapeHtml(String(client.id || ''))}">${escapeHtml(clientLabel)}</button>` : escapeHtml(clientLabel)} · ${escapeHtml(normalizeDealStage(deal.stage))} · ${escapeHtml(getDealHeatLabel(deal.heat))}${escapeHtml(amountText)} · срок ${escapeHtml(getDealNextTouchDateLabel(deal.next_touch_at))}`;
 
         const contactMeta = document.createElement('div');
         contactMeta.className = 'deal-details-meta';
@@ -3428,9 +3537,9 @@
             <input id="dealDetailTitleInput" type="text" placeholder="Название сделки" style="grid-column:1 / span 2;">
             <input id="dealDetailAmountInput" type="number" min="0" step="0.01" placeholder="Сумма сделки, ₽" style="grid-column:1 / span 2;">
             <select id="dealDetailStatusInput">
-                <option value="active">active</option>
-                <option value="won">won</option>
-                <option value="lost">lost</option>
+                <option value="active">В работе</option>
+                <option value="won">Выиграли</option>
+                <option value="lost">Клиент отказался</option>
             </select>
             <input id="dealDetailNextDateInput" type="date">
             <div style="display:flex; gap:6px; align-items:center;">
@@ -3471,10 +3580,8 @@
             panel.appendChild(deliveryBadge);
         }
         if (isDealClosed(deal)) {
-            const detailClosedChip = document.createElement('div');
-            detailClosedChip.className = 'deal-closed-chip';
+            const detailClosedChip = createDealClosedChip(deal);
             detailClosedChip.style.marginBottom = '8px';
-            detailClosedChip.textContent = 'Закрыта';
             panel.appendChild(detailClosedChip);
         }
         panel.appendChild(actions);
@@ -3494,10 +3601,19 @@
                 const suffix = t.taskStatus === 'done'
                     ? (doneResult ? ` · Итог: ${doneResult}` : ' · Выполнена')
                     : '';
+                const taskDueLabel = formatDateTimeRu(getExecutionDate(t), getExecutionTime(t));
+                const taskContactLabel = getTaskContactPersonLabel(t, client) || 'не указано';
                 row.className = t.taskStatus === 'done' ? 'deal-linked-task-row done' : 'deal-linked-task-row';
                 row.dataset.action = 'dealOpenTask';
                 row.dataset.taskId = String(t.id || '');
-                row.innerHTML = `<span>${escapeHtml(`${taskText}${suffix}`)}</span><span class="task-created-meta">${escapeHtml(getTaskCreatedDateLabel(t))}</span>`;
+                row.innerHTML = `
+                    <span class="deal-linked-task-meta">
+                        <span class="deal-linked-task-due">Срок: ${escapeHtml(taskDueLabel)}</span>
+                        <span class="deal-linked-task-contact">Контакт: ${escapeHtml(taskContactLabel)}</span>
+                    </span>
+                    <span>${escapeHtml(`${taskText}${suffix}`)}</span>
+                    <span class="task-created-meta">${escapeHtml(getTaskCreatedDateLabel(t))}</span>
+                `;
                 tasksWrap.appendChild(row);
             });
             panel.appendChild(tasksWrap);
@@ -3707,10 +3823,7 @@
 
             item.appendChild(head);
             if (isDealClosed(deal)) {
-                const closedChip = document.createElement('div');
-                closedChip.className = 'deal-closed-chip';
-                closedChip.textContent = 'Закрыта';
-                item.appendChild(closedChip);
+                item.appendChild(createDealClosedChip(deal));
             }
             item.appendChild(clientLine);
             item.appendChild(title);
@@ -5761,10 +5874,7 @@
 
             item.appendChild(head);
             if (isDealClosed(deal)) {
-                const closedChip = document.createElement('div');
-                closedChip.className = 'deal-closed-chip';
-                closedChip.textContent = 'Закрыта';
-                item.appendChild(closedChip);
+                item.appendChild(createDealClosedChip(deal));
             }
             item.appendChild(title);
             item.appendChild(meta);
@@ -6519,12 +6629,16 @@
             onHistoryClientChanged();
             return;
         }
+        const baseQuery = normalizeSearchValue(String(searchInput.value || '').split('— контакт:')[0].replace(/\(связанный\)\s*$/, '').trim());
 
         const exactLabelMatches = taskClientSearchCache.filter(item => normalizeSearchValue(item.label) === query);
         const exactNameMatches = clients
             .filter(c => normalizeSearchValue(c.name) === query)
             .map(c => ({ id: String(c.id), label: c.name || 'Без названия' }));
-        const exactMatches = [...exactLabelMatches, ...exactNameMatches].filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
+        const exactBaseNameMatches = baseQuery && baseQuery !== query
+            ? clients.filter(c => normalizeSearchValue(c.name) === baseQuery).map(c => ({ id: String(c.id), label: c.name || 'Без названия' }))
+            : [];
+        const exactMatches = [...exactLabelMatches, ...exactNameMatches, ...exactBaseNameMatches].filter((item, idx, arr) => arr.findIndex(x => x.id === item.id) === idx);
         if (exactMatches.length === 1) {
             hiddenSelect.value = exactMatches[0].id;
             onHistoryClientChanged();
@@ -6546,6 +6660,38 @@
 
         hiddenSelect.value = '';
         onHistoryClientChanged();
+    }
+
+    function resolveTaskClientIdFromSearch(usePartialMatch = true) {
+        const searchInput = document.getElementById('hClientSearch');
+        const hiddenSelect = document.getElementById('hClientSelect');
+        if (hiddenSelect && String(hiddenSelect.value || '').trim()) return String(hiddenSelect.value || '').trim();
+        if (!searchInput) return '';
+
+        const query = normalizeSearchValue(searchInput.value);
+        if (!query) return '';
+        const baseQuery = normalizeSearchValue(String(searchInput.value || '').split('— контакт:')[0].replace(/\(связанный\)\s*$/, '').trim());
+
+        const cachedItems = Array.isArray(taskClientSearchCache) ? taskClientSearchCache : [];
+        const freshItems = getTaskClientSearchResults(searchInput.value).map(item => ({ id: String(item.client.id), label: item.label }));
+        const allItems = [...cachedItems, ...freshItems].filter((item, idx, arr) => arr.findIndex(x => String(x.id) === String(item.id)) === idx);
+
+        const exactLabelMatches = allItems.filter(item => normalizeSearchValue(item.label) === query);
+        const exactNameMatches = clients
+            .filter(c => normalizeSearchValue(c.name) === query)
+            .map(c => ({ id: String(c.id), label: c.name || 'Без названия' }));
+        const exactBaseNameMatches = baseQuery && baseQuery !== query
+            ? clients.filter(c => normalizeSearchValue(c.name) === baseQuery).map(c => ({ id: String(c.id), label: c.name || 'Без названия' }))
+            : [];
+        const exactMatches = [...exactLabelMatches, ...exactNameMatches, ...exactBaseNameMatches].filter((item, idx, arr) => arr.findIndex(x => String(x.id) === String(item.id)) === idx);
+        if (exactMatches.length === 1) return String(exactMatches[0].id);
+
+        if (!usePartialMatch) return '';
+
+        const partialMatches = allItems.filter(item => normalizeSearchValue(item.label).includes(query));
+        if (partialMatches.length === 1) return String(partialMatches[0].id);
+
+        return '';
     }
 
     function populateHistoryContactPersonSelect(clientId, selectedContactId = '') {
@@ -6648,6 +6794,7 @@
         document.getElementById('hStatus').value = 'new';
         document.getElementById('hContactPersonWrap').classList.add('hidden');
         document.getElementById('hContactPersonSelect').replaceChildren();
+        renderTaskTopicTemplateOptions();
         updateStatusButtonsUI('new');
     }
 
@@ -6674,6 +6821,7 @@
         document.getElementById('hType').value = item.type;
         document.getElementById('hResult').value = item.result;
         document.getElementById('hTopic').value = item.nextStep || item.desc || '';
+        renderTaskTopicTemplateOptions();
         
         document.getElementById('hNextDate').value = item.nextDate || '';
         document.getElementById('hNextTime').value = item.nextTime || '';
@@ -6797,7 +6945,9 @@
         const idVal = document.getElementById('hId').value;
         const hiddenClientId = document.getElementById('hClientId').value;
         applyTaskClientFromSearch();
-        const selectedClientId = document.getElementById('hClientSelect').value;
+        const hClientSelect = document.getElementById('hClientSelect');
+        const selectedClientId = hClientSelect.value || resolveTaskClientIdFromSearch(true);
+        if (selectedClientId && !hClientSelect.value) hClientSelect.value = selectedClientId;
         const existingRecord = idVal ? history.find(h => String(h.id) === String(idVal)) : null;
         const clientId = (forcedHistoryClientId || hiddenClientId || selectedClientId || (existingRecord ? existingRecord.clientId : '') || '').toString();
         const selectedContactPersonId = document.getElementById('hContactPersonSelect').value || '';
